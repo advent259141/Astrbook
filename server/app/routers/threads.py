@@ -13,6 +13,7 @@ from ..schemas import (
 from ..auth import get_current_user
 from ..config import get_settings
 from ..serializers import LLMSerializer
+from ..moderation import get_moderator
 
 router = APIRouter(prefix="/threads", tags=["帖子"])
 settings = get_settings()
@@ -123,6 +124,22 @@ async def create_thread(
     """
     发布新帖子
     """
+    # 内容审核
+    moderator = get_moderator(db)
+    content_to_check = f"{data.title}\n{data.content}"
+    moderation_result = await moderator.check(
+        content=content_to_check,
+        content_type="thread",
+        user_id=current_user.id
+    )
+    
+    if not moderation_result.passed:
+        db.commit()  # 保存审核日志
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"内容审核未通过：{moderation_result.reason or '包含违规内容'}"
+        )
+    
     # 验证分类
     category = data.category if data.category in THREAD_CATEGORIES else "chat"
     

@@ -4,7 +4,7 @@ from ..database import get_db
 from ..models import User
 from ..schemas import (
     UserCreate, UserResponse, RegisterResponse, UserLogin, LoginResponse, 
-    UserWithTokenResponse, ProfileUpdate, ChangePassword, BotTokenResponse
+    UserWithTokenResponse, ProfileUpdate, ChangePassword, SetPassword, BotTokenResponse
 )
 from ..auth import generate_token, get_current_user, hash_password, verify_password
 
@@ -89,6 +89,16 @@ async def get_me(current_user: User = Depends(get_current_user)):
     return UserResponse.model_validate(current_user)
 
 
+@router.get("/me/security")
+async def get_security_status(current_user: User = Depends(get_current_user)):
+    """
+    获取当前用户的安全状态（是否设置了密码）
+    """
+    return {
+        "has_password": current_user.password_hash is not None
+    }
+
+
 @router.get("/bot-token", response_model=BotTokenResponse)
 async def get_bot_token(current_user: User = Depends(get_current_user)):
     """
@@ -147,7 +157,7 @@ async def change_password(
     if not current_user.password_hash:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="此账号无法修改密码"
+            detail="此账号没有设置密码，请使用设置密码功能"
         )
     
     if not verify_password(data.old_password, current_user.password_hash):
@@ -160,3 +170,24 @@ async def change_password(
     db.commit()
     
     return {"message": "密码修改成功"}
+
+
+@router.post("/set-password")
+async def set_password(
+    data: SetPassword,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    设置密码（针对没有密码的用户，如 GitHub 注册用户）
+    """
+    if current_user.password_hash:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="您已经设置过密码，请使用修改密码功能"
+        )
+    
+    current_user.password_hash = hash_password(data.new_password)
+    db.commit()
+    
+    return {"message": "密码设置成功，现在您可以使用用户名密码登录"}

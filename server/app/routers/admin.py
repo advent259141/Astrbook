@@ -1,12 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import func, desc
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from ..database import get_db
-from ..models import User, Thread, Reply, Admin
+from ..models import User, Thread, Reply, Admin, SystemSettings, ModerationLog
 from ..schemas import UserResponse, PaginatedResponse, AdminLogin, AdminLoginResponse, AdminResponse, THREAD_CATEGORIES
 from ..auth import verify_admin, hash_password, verify_password, generate_token
+from ..moderation import fetch_available_models, DEFAULT_MODERATION_PROMPT
 
 router = APIRouter(prefix="/admin", tags=["管理"])
 
@@ -201,4 +202,283 @@ async def update_thread_category(
         "old_category": old_category,
         "new_category": data.category,
         "category_name": THREAD_CATEGORIES[data.category]
+    }
+
+
+# ========== 审核配置 ==========
+
+class ModerationSettingsUpdate(BaseModel):
+    """审核配置更新请求"""
+    enabled: Optional[bool] = None
+    api_base: Optional[str] = None
+    api_key: Optional[str] = None
+    model: Optional[str] = None
+    prompt: Optional[str] = None
+
+
+class ModerationTestRequest(BaseModel):
+    """审核测试请求"""
+    content: str
+    api_base: Optional[str] = None
+    api_key: Optional[str] = None
+    model: Optional[str] = None
+    prompt: Optional[str] = None
+
+
+def _get_setting(db: Session, key: str, default: str = "") -> str:
+    """获取设置值"""
+    setting = db.query(SystemSettings).filter(SystemSettings.key == key).first()
+    return setting.value if setting and setting.value else default
+
+
+def _set_setting(db: Session, key: str, value: str):
+    """设置值"""
+    setting = db.query(SystemSettings).filter(SystemSettings.key == key).first()
+    if setting:
+        setting.value = value
+    else:
+        setting = SystemSettings(key=key, value=value)
+        db.add(setting)
+
+
+@router.get("/settings/moderation")
+async def get_moderation_settings(
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(verify_admin)
+):
+    """
+    获取审核配置
+    """
+    return {
+        "enabled": _get_setting(db, "moderation_enabled", "false") == "true",
+        "api_base": _get_setting(db, "moderation_api_base", "https://api.openai.com/v1"),
+        "api_key": _get_setting(db, "moderation_api_key", ""),
+        "model": _get_setting(db, "moderation_model", "gpt-4o-mini"),
+        "prompt": _get_setting(db, "moderation_prompt", DEFAULT_MODERATION_PROMPT),
+        "default_prompt": DEFAULT_MODERATION_PROMPT
+    }
+
+
+@router.put("/settings/moderation")
+async def update_moderation_settings(
+    data: ModerationSettingsUpdate,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(verify_admin)
+):
+    """
+    更新审核配置
+    """
+    if data.enabled is not None:
+        _set_setting(db, "moderation_enabled", "true" if data.enabled else "false")
+    if data.api_base is not None:
+        _set_setting(db, "moderation_api_base", data.api_base)
+    if data.api_key is not None:
+        _set_setting(db, "moderation_api_key", data.api_key)
+    if data.model is not None:
+        _set_setting(db, "moderation_model", data.model)
+    if data.prompt is not None:
+        _set_setting(db, "moderation_prompt", data.prompt)
+    
+    db.commit()
+    
+    return {"message": "配置已更新"}
+
+
+@router.get("/settings/moderation/models")
+async def get_moderation_models(
+    api_base: Optional[str] = None,
+    api_key: Optional[str] = None,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(verify_admin)
+):
+    """
+    从 API 获取可用模型列表
+    """
+    # 使用传入的参数或从数据库读取
+    base = api_base or _get_setting(db, "moderation_api_base", "https://api.openai.com/v1")
+    key = api_key or _get_setting(db, "moderation_api_key", "")
+    
+    if not key:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="请先配置 API Key"
+        )
+    
+    try:
+        models = await fetch_available_models(base, key)
+        return {"models": models}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"获取模型列表失败: {str(e)}"
+        )
+
+
+@router.post("/settings/moderation/test")
+async def test_moderation(
+    data: ModerationTestRequest,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(verify_admin)
+):
+    """
+    测试审核配置
+    """
+    import httpx
+    import json
+    
+    # 使用传入的参数或从数据库读取
+    api_base = data.api_base or _get_setting(db, "moderation_api_base", "https://api.openai.com/v1")
+    api_key = data.api_key or _get_setting(db, "moderation_api_key", "")
+    model = data.model or _get_setting(db, "moderation_model", "gpt-4o-mini")
+    prompt = data.prompt or _get_setting(db, "moderation_prompt", DEFAULT_MODERATION_PROMPT)
+    
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="请先配置 API Key"
+        )
+    
+    # 构建完整的 prompt
+    full_prompt = prompt.replace("{content}", data.content)
+    
+    url = f"{api_base.rstrip('/')}/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "user", "content": full_prompt}
+        ],
+        "temperature": 0,
+        "max_tokens": 200
+    }
+    
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(url, headers=headers, json=payload)
+            response.raise_for_status()
+            result = response.json()
+        
+        reply = result["choices"][0]["message"]["content"].strip()
+        
+        # 尝试解析 JSON
+        try:
+            if reply.startswith("```"):
+                reply = reply.split("```")[1]
+                if reply.startswith("json"):
+                    reply = reply[4:]
+                reply = reply.strip()
+            
+            parsed = json.loads(reply)
+            return {
+                "success": True,
+                "raw_response": result["choices"][0]["message"]["content"],
+                "parsed": parsed
+            }
+        except json.JSONDecodeError:
+            return {
+                "success": True,
+                "raw_response": result["choices"][0]["message"]["content"],
+                "parsed": None,
+                "warning": "无法解析为 JSON"
+            }
+            
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"测试失败: {str(e)}"
+        )
+
+
+# ========== 审核日志 ==========
+
+class ModerationLogResponse(BaseModel):
+    """审核日志响应"""
+    id: int
+    content_type: str
+    content_id: Optional[int]
+    user_id: int
+    username: Optional[str] = None
+    content_preview: Optional[str]
+    passed: bool
+    flagged_category: Optional[str]
+    reason: Optional[str]
+    model_used: Optional[str]
+    created_at: str
+
+
+@router.get("/moderation/logs")
+async def get_moderation_logs(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    passed: Optional[bool] = None,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(verify_admin)
+):
+    """
+    获取审核日志列表
+    """
+    query = db.query(ModerationLog).options(joinedload(ModerationLog.user))
+    count_query = db.query(func.count(ModerationLog.id))
+    
+    # 筛选
+    if passed is not None:
+        query = query.filter(ModerationLog.passed == passed)
+        count_query = count_query.filter(ModerationLog.passed == passed)
+    
+    total = count_query.scalar()
+    total_pages = (total + page_size - 1) // page_size if total > 0 else 1
+    
+    logs = (
+        query
+        .order_by(desc(ModerationLog.created_at))
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+    
+    items = [
+        {
+            "id": log.id,
+            "content_type": log.content_type,
+            "content_id": log.content_id,
+            "user_id": log.user_id,
+            "username": log.user.username if log.user else None,
+            "content_preview": log.content_preview,
+            "passed": log.passed,
+            "flagged_category": log.flagged_category,
+            "reason": log.reason,
+            "model_used": log.model_used,
+            "created_at": log.created_at.isoformat() if log.created_at else None
+        }
+        for log in logs
+    ]
+    
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages
+    }
+
+
+@router.get("/moderation/stats")
+async def get_moderation_stats(
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(verify_admin)
+):
+    """
+    获取审核统计
+    """
+    total = db.query(func.count(ModerationLog.id)).scalar()
+    passed = db.query(func.count(ModerationLog.id)).filter(ModerationLog.passed == True).scalar()
+    blocked = db.query(func.count(ModerationLog.id)).filter(ModerationLog.passed == False).scalar()
+    
+    return {
+        "total": total,
+        "passed": passed,
+        "blocked": blocked
     }

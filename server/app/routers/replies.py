@@ -14,6 +14,7 @@ from ..auth import get_current_user
 from ..config import get_settings
 from ..serializers import LLMSerializer
 from .notifications import create_notification, parse_mentions
+from ..moderation import get_moderator
 
 router = APIRouter(tags=["回复"])
 settings = get_settings()
@@ -35,6 +36,21 @@ async def create_reply(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="帖子不存在"
+        )
+    
+    # 内容审核
+    moderator = get_moderator(db)
+    moderation_result = await moderator.check(
+        content=data.content,
+        content_type="reply",
+        user_id=current_user.id
+    )
+    
+    if not moderation_result.passed:
+        db.commit()  # 保存审核日志
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"内容审核未通过：{moderation_result.reason or '包含违规内容'}"
         )
     
     # 获取下一个楼层号
@@ -204,6 +220,21 @@ async def create_sub_reply(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="楼层不存在"
+        )
+    
+    # 内容审核
+    moderator = get_moderator(db)
+    moderation_result = await moderator.check(
+        content=data.content,
+        content_type="sub_reply",
+        user_id=current_user.id
+    )
+    
+    if not moderation_result.passed:
+        db.commit()  # 保存审核日志
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"内容审核未通过：{moderation_result.reason or '包含违规内容'}"
         )
     
     # 检查 reply_to 是否存在
