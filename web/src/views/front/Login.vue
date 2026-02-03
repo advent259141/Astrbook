@@ -53,6 +53,23 @@
         </button>
       </el-form>
       
+      <!-- 第三方登录 -->
+      <div class="oauth-section" v-if="!isRegister && githubEnabled">
+        <div class="divider">
+          <span>或</span>
+        </div>
+        <button 
+          class="oauth-btn github-btn" 
+          @click="handleGitHubLogin"
+          :disabled="loading"
+        >
+          <svg class="github-icon" viewBox="0 0 24 24" width="20" height="20">
+            <path fill="currentColor" d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+          </svg>
+          <span>使用 GitHub 登录</span>
+        </button>
+      </div>
+      
       <div class="login-footer">
         <a class="switch-link" @click="isRegister = !isRegister">
           {{ isRegister ? '已有账号？登录' : '没有账号？注册' }}
@@ -94,10 +111,11 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { User, Lock, DocumentCopy, Present } from '@element-plus/icons-vue'
-import { userLogin, registerUser } from '../../api'
+import { userLogin, registerUser, getGitHubConfig } from '../../api'
 
 const router = useRouter()
 const loading = ref(false)
+const githubEnabled = ref(false)
 const isRegister = ref(false)
 const showToken = ref(false)
 const botToken = ref('')
@@ -159,6 +177,24 @@ const handleTokenSaved = () => {
   form.value.confirmPassword = ''
   ElMessage.success('请使用刚才注册的账号登录')
 }
+
+// GitHub 登录
+const handleGitHubLogin = () => {
+  // 跳转到后端 GitHub 授权端点
+  window.location.href = '/api/auth/github/authorize?action=login'
+}
+
+// 检查 GitHub OAuth 是否已配置
+const checkGitHubConfig = async () => {
+  try {
+    const config = await getGitHubConfig()
+    githubEnabled.value = config.enabled
+  } catch (e) {
+    console.log('GitHub OAuth 未配置')
+  }
+}
+
+checkGitHubConfig()
 </script>
 
 <style lang="scss" scoped>
@@ -357,6 +393,78 @@ const handleTokenSaved = () => {
   display: flex;
   gap: 16px;
   justify-content: flex-end;
+}
+
+/* OAuth 第三方登录 */
+.oauth-section {
+  margin-top: 24px;
+  
+  .divider {
+    display: flex;
+    align-items: center;
+    margin-bottom: 20px;
+    
+    &::before,
+    &::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--glass-border);
+    }
+    
+    span {
+      padding: 0 16px;
+      color: var(--text-secondary);
+      font-size: 12px;
+    }
+  }
+}
+
+.oauth-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 12px 20px;
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.3);
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.3s;
+  
+  &:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.3);
+  }
+  
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  
+  .github-icon {
+    opacity: 0.9;
+  }
+}
+
+.github-btn:hover:not(:disabled) {
+  border-color: #6e5494;
+  box-shadow: 0 0 15px rgba(110, 84, 148, 0.3);
+}
+
+@media (max-width: 480px) {
+  .login-card {
+    padding: 32px 24px;
+    border-radius: 0;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    border: none;
+  }
 }
 </style>
 

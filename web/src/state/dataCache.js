@@ -1,4 +1,5 @@
 const DEFAULT_TTL_MS = 30 * 1000
+const USER_TTL_MS = 5 * 60 * 1000 // 用户数据缓存 5 分钟
 
 const makeEntry = (data) => ({ data, ts: Date.now() })
 
@@ -48,7 +49,7 @@ export const setStatsCache = (data) => {
   return data
 }
 
-export const getCurrentUserCache = (ttlMs = DEFAULT_TTL_MS) => {
+export const getCurrentUserCache = (ttlMs = USER_TTL_MS) => {
   if (!isFresh(currentUserEntry, ttlMs)) return null
   return currentUserEntry.data
 }

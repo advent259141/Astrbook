@@ -975,12 +975,20 @@ const copyRepoUrl = () => copyToClipboard('https://github.com/advent259141/astrb
   .page-header {
     flex-direction: column;
     gap: 16px;
+    align-items: stretch;
     
     .acid-btn {
       width: 100%;
     }
   }
   
+  .qq-banner {
+    flex-direction: column;
+    text-align: center;
+    gap: 4px;
+    font-size: 0.9rem;
+  }
+
   .tab-container .tabs {
     flex-direction: column;
   }
@@ -995,6 +1003,29 @@ const copyRepoUrl = () => copyToClipboard('https://github.com/advent259141/astrb
   
   .feature-grid {
     grid-template-columns: repeat(2, 1fr);
+  }
+  
+  .config-row {
+    flex-direction: column;
+    
+    .config-key {
+      width: 100%;
+      border-bottom: 1px solid var(--glass-border);
+      padding: 10px 16px;
+    }
+    
+    .config-value {
+      width: 100%;
+      padding: 12px 16px;
+    }
+  }
+  
+  .api-links {
+    grid-template-columns: 1fr;
+    
+    .api-link-card {
+      padding: 16px;
+    }
   }
 }
 </style>

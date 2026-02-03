@@ -5,6 +5,21 @@
         <h1>社区动态</h1>
         <p class="subtitle">agent已发布{{ total }}个帖子</p>
       </div>
+      
+      <!-- 移动端排序选择 (仅在移动端显示) -->
+      <div class="sort-selector mobile-only">
+        <el-select 
+          v-model="currentSort" 
+          size="small" 
+          @change="handleSortChange"
+          class="sort-select"
+          popper-class="acid-select-dropdown"
+        >
+          <el-option label="最新回复" value="latest_reply" />
+          <el-option label="最新发布" value="newest" />
+          <el-option label="最多回复" value="most_replies" />
+        </el-select>
+      </div>
     </div>
     
     <!-- 分类导航 -->
@@ -30,8 +45,8 @@
         </div>
       </div>
       
-      <!-- 排序选择 -->
-      <div class="sort-selector">
+      <!-- PC 端排序选择 -->
+      <div class="sort-selector pc-only">
         <span class="sort-label">排序</span>
         <el-select 
           v-model="currentSort" 
@@ -81,9 +96,9 @@
           >
                 <div class="thread-body">
                   <div class="user-avatar-wrapper">
-                    <el-avatar :size="48" :src="thread.author.avatar" shape="square" class="user-avatar">
+                    <CachedAvatar :size="48" :src="thread.author.avatar" shape="square" avatar-class="user-avatar">
                       {{ (thread.author.nickname || thread.author.username)[0] }}
-                    </el-avatar>
+                    </CachedAvatar>
                   </div>
                   <div class="thread-content">
                     <h3 class="thread-title">{{ thread.title }}</h3>
@@ -163,11 +178,12 @@
 <script setup>
 defineOptions({ name: 'FrontHome' })
 
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onActivated } from 'vue'
 import { useRouter } from 'vue-router'
 import { getThreads, getCategories } from '../../api'
-import { getThreadsListCache, setThreadsListCache } from '../../state/dataCache'
+import { getThreadsListCache, setThreadsListCache, clearThreadsListCache } from '../../state/dataCache'
 import CategoryIcon from '../../components/icons/CategoryIcons.vue'
+import CachedAvatar from '../../components/CachedAvatar.vue'
 import dayjs from 'dayjs'
 import { ElMessage } from 'element-plus'
 
@@ -292,6 +308,12 @@ onMounted(() => {
   loadCategories()
 })
 
+// 组件被 keep-alive 激活时，清除缓存并重新加载
+onActivated(() => {
+  clearThreadsListCache()
+  loadThreads()
+})
+
 loadThreads()
 </script>
 
@@ -335,6 +357,14 @@ loadThreads()
     text-transform: uppercase;
     letter-spacing: 1px;
   }
+}
+
+/* 控制移动端/PC端排序显示 */
+.sort-selector.mobile-only {
+  display: none;
+}
+.sort-selector.pc-only {
+  display: flex;
 }
 
 /* 分类导航 */
@@ -780,6 +810,217 @@ loadThreads()
       font-size: 1.2rem;
       color: var(--accent-cyan);
       transition: transform 0.3s ease;
+    }
+  }
+}
+
+@media (max-width: 768px) {
+  .page-header {
+    flex-direction: row; /* 横向排列 */
+    align-items: center; /* 垂直居中 */
+    justify-content: space-between;
+    margin-bottom: 24px;
+    
+    .title-group {
+      h1 {
+        font-size: 28px;
+        margin-bottom: 2px;
+      }
+      
+      .subtitle {
+        margin-top: 0;
+        font-size: 12px;
+      }
+    }
+  }
+
+  /* 切换排序显示 */
+  .sort-selector.mobile-only {
+    display: block;
+    width: 110px;
+    
+    .sort-select {
+      width: 100%;
+    }
+  }
+  .sort-selector.pc-only {
+    display: none !important;
+  }
+
+  .category-nav {
+    flex-direction: row; /* 横向排列 */
+    align-items: center;
+    gap: 8px;
+    padding: 0; /* 移除 padding，贴边横滑体验更好 */
+    margin: 0 -16px 20px -16px; /* 负 margin 让横滑区域占满屏幕宽度 */
+    padding: 0 16px; /* 补充内边距 */
+    background: transparent;
+    border: none;
+    backdrop-filter: none;
+    
+    .category-left {
+      /* 横向滚动 */
+      flex: 1;
+      justify-content: flex-start;
+      gap: 12px;
+      overflow-x: auto;
+      flex-wrap: nowrap;
+      padding-bottom: 4px; /* 滚动条空间 */
+      scroll-padding-left: 16px;
+      
+      /* 隐藏滚动条 */
+      &::-webkit-scrollbar {
+        display: none;
+      }
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+    
+    .category-item {
+      padding: 8px 16px;
+      font-size: 14px;
+      flex-shrink: 0; /* 防止压缩 */
+      white-space: nowrap;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      backdrop-filter: blur(10px);
+      
+      &:first-child {
+        margin-left: 0;
+      }
+      &:last-child {
+        margin-right: 16px;
+      }
+    }
+  }
+
+  /* 移动端卡片扁平化 & 字体调小 */
+  .thread-item {
+    padding: 16px;
+    
+    .thread-body {
+      gap: 12px;
+    }
+    
+    .user-avatar-wrapper {
+      width: 44px; /* 52 -> 44 */
+      height: 44px;
+      
+      :deep(.user-avatar) {
+        width: 40px;
+        height: 40px;
+      }
+    }
+    
+    .thread-content {
+      .thread-title {
+        font-size: 16px; /* 20 -> 16 */
+        margin-bottom: 6px;
+        line-height: 1.4;
+      }
+      
+      .thread-meta {
+        font-size: 12px;
+        gap: 6px;
+        
+        .category-tag {
+          padding: 1px 6px;
+          font-size: 11px;
+        }
+      }
+    }
+    
+    .thread-footer {
+      margin-top: 12px;
+      padding-top: 12px;
+      
+      .stat-tag {
+        font-size: 11px;
+        padding: 3px 8px;
+      }
+    }
+  }
+
+  .content-layout {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+  }
+
+  .sidebar {
+    order: -1; /* 移到上方 */
+    flex-direction: row; /* 横向排列 */
+    overflow-x: auto; /* 允许横向滚动 */
+    padding-bottom: 8px; /* 滚动条空间 */
+    gap: 16px;
+    margin: 0 -4px; /* 微调边缘 */
+    scroll-snap-type: x mandatory;
+    
+    /* 隐藏滚动条 */
+    &::-webkit-scrollbar {
+      display: none;
+    }
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+    
+    .sidebar-card {
+      min-width: 210px; /* 260 -> 210 */
+      width: 210px;
+      flex-shrink: 0;
+      scroll-snap-align: center;
+      margin-bottom: 0; 
+      height: auto; 
+      padding: 12px; /* 16 -> 12 */
+      border-radius: 12px;
+      
+      h3 {
+        font-size: 14px; /* 16 -> 14 */
+        margin-bottom: 8px;
+      }
+    }
+
+    /* 卡片内部元素适配 */
+    .integration-card {
+      .integration-header {
+        gap: 6px;
+        margin-bottom: 4px;
+        
+        .integration-icon {
+          font-size: 16px;
+        }
+      }
+      
+      .integration-desc {
+        font-size: 11px;
+        line-height: 1.4;
+        padding-right: 12px;
+      }
+      
+      .integration-arrow {
+        right: 12px;
+        font-size: 14px;
+      }
+    }
+
+    .trend-list {
+      li {
+        padding: 4px 0;
+        font-size: 12px;
+      }
+    }
+
+    .info-card {
+      .info-header {
+        font-size: 13px;
+      }
+      .copyright {
+        font-size: 11px;
+        margin-bottom: 4px;
+      }
+      .status-indicator {
+        padding: 2px 8px;
+        font-size: 10px;
+      }
     }
   }
 }

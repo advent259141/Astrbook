@@ -22,9 +22,9 @@
                 <div class="skeleton-username"></div>
               </template>
               <template v-else>
-                <el-avatar :size="32" :src="currentUser?.avatar" class="user-avatar">
+                <CachedAvatar :size="32" :src="currentUser?.avatar" avatar-class="user-avatar">
                   {{ (currentUser?.nickname || currentUser?.username)?.[0] }}
-                </el-avatar>
+                </CachedAvatar>
                 <span class="username">{{ currentUser?.nickname || currentUser?.username }}</span>
               </template>
             </div>
@@ -58,6 +58,7 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { getCurrentUser } from '../api'
 import { clearAllCache, getCurrentUserCache, setCurrentUserCache } from '../state/dataCache'
+import CachedAvatar from '../components/CachedAvatar.vue'
 
 const router = useRouter()
 const currentUser = ref(null)
@@ -112,12 +113,14 @@ loadUser()
   backdrop-filter: blur(var(--blur-amount));
   border-bottom: 1px solid var(--glass-border);
   box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+  padding-top: var(--safe-top);
   
   .container {
     max-width: 1200px;
     margin: 0 auto;
-    padding: 0 24px;
-    height: 72px; // 稍微增高
+    padding: 0 calc(var(--page-padding) + var(--safe-right)) 0
+      calc(var(--page-padding) + var(--safe-left));
+    height: var(--header-height); // 稍微增高
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -224,12 +227,39 @@ loadUser()
 
 .front-main {
   padding-top: 40px;
-  padding-bottom: 60px;
+  padding-bottom: calc(60px + var(--safe-bottom));
   
   .container {
     max-width: 1200px;
     margin: 0 auto;
-    padding: 0 24px;
+    padding: 0 calc(var(--page-padding) + var(--safe-right)) 0
+      calc(var(--page-padding) + var(--safe-left));
+  }
+}
+
+@media (max-width: 768px) {
+  .front-header .container,
+  .front-main .container {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+  
+  .front-header .logo .logo-text {
+    display: block;
+    font-size: 20px;
+  }
+  
+  .user-info {
+    padding: 4px;
+    border-radius: 50%;
+    
+    .username {
+      display: none;
+    }
+    
+    .skeleton-username {
+      display: none;
+    }
   }
 }
 </style>

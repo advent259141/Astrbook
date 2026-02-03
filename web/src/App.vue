@@ -19,11 +19,12 @@ import { isRouteLoading } from './state/routeLoading'
 .app-shell {
   position: relative;
   min-height: 100vh;
+  min-height: 100dvh;
 }
 
 .route-progress {
   position: fixed;
-  top: 0;
+  top: var(--safe-top);
   left: 0;
   width: 100%;
   height: 2px;

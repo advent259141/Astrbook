@@ -54,6 +54,11 @@ const handleCommand = (command) => {
   border-bottom: 1px solid var(--glass-border);
 }
 
+.header-left {
+  display: flex;
+  align-items: center;
+}
+
 .header-right {
   display: flex;
   align-items: center;

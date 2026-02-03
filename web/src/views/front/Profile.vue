@@ -124,11 +124,12 @@
         </div>
       </div>
       
-      <!-- 修改密码 -->
+      <!-- 修改密码 / 设置密码 -->
       <div class="glass-card password-card">
         <h3 class="section-title">安全设置</h3>
         
-        <el-form :model="passwordForm" label-width="100px">
+        <!-- 已有密码：修改密码 -->
+        <el-form v-if="hasPassword" :model="passwordForm" label-width="100px">
           <el-form-item label="当前密码">
             <div class="input-box">
               <el-input 
@@ -168,6 +169,85 @@
             </button>
           </el-form-item>
         </el-form>
+        
+        <!-- 没有密码：设置密码 -->
+        <div v-else>
+          <div class="no-password-hint">
+            <el-icon><InfoFilled /></el-icon>
+            <span>你通过 GitHub 注册，还未设置密码。设置密码后可以使用用户名+密码登录。</span>
+          </div>
+          <el-form :model="setPasswordForm" label-width="100px">
+            <el-form-item label="新密码">
+              <div class="input-box">
+                <el-input 
+                  v-model="setPasswordForm.newPassword" 
+                  type="password" 
+                  show-password
+                  placeholder="至少 6 位字符"
+                  class="acid-input"
+                />
+              </div>
+            </el-form-item>
+            <el-form-item label="确认密码">
+              <div class="input-box">
+                <el-input 
+                  v-model="setPasswordForm.confirmPassword" 
+                  type="password" 
+                  show-password
+                  placeholder="再次输入密码"
+                  class="acid-input"
+                />
+              </div>
+            </el-form-item>
+            <el-form-item>
+              <button class="acid-btn" @click="setPassword" :disabled="settingPassword">
+                {{ settingPassword ? '设置中...' : '设置密码' }}
+              </button>
+            </el-form-item>
+          </el-form>
+        </div>
+      </div>
+      
+      <!-- 第三方账号绑定 -->
+      <div class="glass-card oauth-card" v-if="githubEnabled">
+        <h3 class="section-title">第三方账号绑定</h3>
+        
+        <div class="oauth-list">
+          <!-- GitHub -->
+          <div class="oauth-item">
+            <div class="oauth-info">
+              <div class="oauth-icon github">
+                <svg viewBox="0 0 24 24" width="24" height="24">
+                  <path fill="currentColor" d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+                </svg>
+              </div>
+              <div class="oauth-details">
+                <span class="oauth-name">GitHub</span>
+                <span v-if="oauthStatus.github" class="oauth-username">
+                  @{{ oauthStatus.github.provider_username }}
+                </span>
+                <span v-else class="oauth-unlinked">未绑定</span>
+              </div>
+            </div>
+            <div class="oauth-actions">
+              <button 
+                v-if="oauthStatus.github" 
+                class="acid-btn small danger" 
+                @click="handleUnlinkGitHub"
+                :disabled="unlinkingGitHub"
+              >
+                {{ unlinkingGitHub ? '解绑中...' : '解除绑定' }}
+              </button>
+              <button 
+                v-else 
+                class="acid-btn small" 
+                @click="handleLinkGitHub"
+              >
+                绑定 GitHub
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -178,8 +258,8 @@ defineOptions({ name: 'FrontProfile' })
 
 import { ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowLeft, DocumentCopy, View, Hide, Upload, Refresh } from '@element-plus/icons-vue'
-import { getBotToken, getCurrentUser, updateProfile, refreshBotToken, changeUserPassword, uploadAvatar } from '../../api'
+import { ArrowLeft, DocumentCopy, View, Hide, Upload, Refresh, InfoFilled } from '@element-plus/icons-vue'
+import { getBotToken, getCurrentUser, updateProfile, refreshBotToken, changeUserPassword, setUserPassword, getSecurityStatus, uploadAvatar, getGitHubConfig, getOAuthStatus, unlinkGitHub } from '../../api'
 import { getCurrentUserCache, setCurrentUserCache } from '../../state/dataCache'
 
 const user = ref(null)
@@ -188,7 +268,14 @@ const saving = ref(false)
 const showToken = ref(false)
 const botToken = ref('')
 const changingPassword = ref(false)
+const settingPassword = ref(false)
 const uploading = ref(false)
+const hasPassword = ref(true)
+
+// OAuth 状态
+const githubEnabled = ref(false)
+const oauthStatus = ref({ github: null })
+const unlinkingGitHub = ref(false)
 
 const form = ref({
   nickname: '',
@@ -198,6 +285,11 @@ const form = ref({
 
 const passwordForm = ref({
   oldPassword: '',
+  newPassword: '',
+  confirmPassword: ''
+})
+
+const setPasswordForm = ref({
   newPassword: '',
   confirmPassword: ''
 })
@@ -225,6 +317,14 @@ const loadUser = async () => {
       } catch (e) {
         // ignore
       }
+    }
+    
+    // 加载安全状态（是否有密码）
+    try {
+      const security = await getSecurityStatus()
+      hasPassword.value = security.has_password
+    } catch (e) {
+      // ignore
     }
   } catch (error) {
     ElMessage.error('加载用户信息失败')
@@ -309,6 +409,30 @@ const changePassword = async () => {
   }
 }
 
+// 设置密码（针对 GitHub 注册用户）
+const setPassword = async () => {
+  if (!setPasswordForm.value.newPassword || setPasswordForm.value.newPassword.length < 6) {
+    ElMessage.warning('密码长度至少为 6 位')
+    return
+  }
+  if (setPasswordForm.value.newPassword !== setPasswordForm.value.confirmPassword) {
+    ElMessage.warning('两次输入的密码不一致')
+    return
+  }
+  
+  settingPassword.value = true
+  try {
+    await setUserPassword(setPasswordForm.value.newPassword)
+    ElMessage.success('密码设置成功，现在可以使用用户名密码登录')
+    setPasswordForm.value = { newPassword: '', confirmPassword: '' }
+    hasPassword.value = true
+  } catch (error) {
+    ElMessage.error(error.response?.data?.detail || '设置失败')
+  } finally {
+    settingPassword.value = false
+  }
+}
+
 // 头像上传
 const beforeAvatarUpload = (file) => {
   const isImage = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(file.type)
@@ -340,7 +464,56 @@ const handleAvatarUpload = async (options) => {
   }
 }
 
+// OAuth 相关方法
+const checkGitHubConfig = async () => {
+  try {
+    const config = await getGitHubConfig()
+    githubEnabled.value = config.enabled
+    if (config.enabled) {
+      await loadOAuthStatus()
+    }
+  } catch (e) {
+    console.log('GitHub OAuth 未配置')
+  }
+}
+
+const loadOAuthStatus = async () => {
+  try {
+    const status = await getOAuthStatus()
+    oauthStatus.value = status
+  } catch (e) {
+    console.error('加载 OAuth 状态失败', e)
+  }
+}
+
+const handleLinkGitHub = () => {
+  // 跳转到后端进行 GitHub 授权（绑定模式）
+  window.location.href = '/api/auth/github/authorize?action=link'
+}
+
+const handleUnlinkGitHub = async () => {
+  try {
+    await ElMessageBox.confirm(
+      '解除绑定后，你将无法使用 GitHub 登录。确定要继续吗？',
+      '确认操作',
+      { type: 'warning' }
+    )
+    
+    unlinkingGitHub.value = true
+    await unlinkGitHub()
+    oauthStatus.value.github = null
+    ElMessage.success('GitHub 账号已解除绑定')
+  } catch (error) {
+    if (error !== 'cancel') {
+      ElMessage.error(error.response?.data?.detail || '解绑失败')
+    }
+  } finally {
+    unlinkingGitHub.value = false
+  }
+}
+
 loadUser()
+checkGitHubConfig()
 </script>
 
 <style lang="scss" scoped>
@@ -690,6 +863,164 @@ loadUser()
   .el-input__count-inner {
     background: transparent;
     color: inherit;
+  }
+}
+
+/* OAuth 绑定卡片 */
+.oauth-card {
+  .oauth-list {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  
+  .oauth-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 8px;
+    border: 1px solid var(--glass-border);
+  }
+  
+  .oauth-info {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  
+  .oauth-icon {
+    width: 48px;
+    height: 48px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    
+    &.github {
+      background: linear-gradient(135deg, #333 0%, #1a1a1a 100%);
+      color: #fff;
+    }
+  }
+  
+  .oauth-details {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  
+  .oauth-name {
+    color: #fff;
+    font-weight: 500;
+    font-size: 14px;
+  }
+  
+  .oauth-username {
+    color: var(--acid-green);
+    font-family: monospace;
+    font-size: 12px;
+  }
+  
+  .oauth-unlinked {
+    color: var(--text-secondary);
+    font-size: 12px;
+  }
+}
+
+/* 无密码提示 */
+.no-password-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 16px;
+  background: rgba(204, 255, 0, 0.1);
+  border: 1px solid rgba(204, 255, 0, 0.3);
+  border-radius: 8px;
+  margin-bottom: 24px;
+  
+  .el-icon {
+    color: var(--acid-green);
+    font-size: 18px;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+  
+  span {
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+}
+
+@media (max-width: 768px) {
+  .page-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 16px;
+    
+    h1 {
+      font-size: 28px;
+    }
+  }
+  
+  .glass-card {
+    padding: 20px;
+  }
+  
+  .avatar-section {
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    
+    .avatar-tips {
+      text-align: center;
+    }
+  }
+
+  .token-display {
+    flex-direction: column;
+    align-items: stretch;
+    
+    .token-box {
+      margin-bottom: 8px;
+    }
+    
+    .token-actions {
+      justify-content: flex-end;
+    }
+  }
+  
+  .oauth-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 16px;
+    
+    .oauth-actions {
+      width: 100%;
+      
+      button {
+        width: 100%;
+      }
+    }
+  }
+  
+  /* Form responsiveness */
+  ::v-deep(.el-form-item) {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    
+    .el-form-item__label {
+      text-align: left;
+      justify-content: flex-start;
+      margin-bottom: 4px;
+      width: auto !important;
+    }
+    
+    .el-form-item__content {
+      margin-left: 0 !important;
+    }
   }
 }
 </style>

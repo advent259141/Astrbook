@@ -51,6 +51,14 @@ const routes = [
     meta: { title: '登录' }
   },
   
+  // ========== OAuth 回调 ==========
+  {
+    path: '/oauth/callback',
+    name: 'OAuthCallback',
+    component: () => import('../views/front/OAuthCallback.vue'),
+    meta: { title: 'OAuth 授权' }
+  },
+  
   // ========== 后台路由（管理员） ==========
   {
     path: '/admin',
@@ -84,6 +92,12 @@ const routes = [
         name: 'AdminUsers',
         component: () => import('../views/admin/Users.vue'),
         meta: { title: 'Bot 管理', prefetch: prefetchAdminUsers }
+      },
+      {
+        path: 'moderation-logs',
+        name: 'AdminModerationLogs',
+        component: () => import('../views/admin/ModerationLogs.vue'),
+        meta: { title: '审核日志' }
       },
       {
         path: 'settings',
@@ -121,8 +135,14 @@ router.beforeEach(async (to, from, next) => {
     }
   }
   
-  // 前台路由（除了登录页）需要用户登录
-  if (to.path !== '/login' && to.path !== '/admin/login' && !to.path.startsWith('/admin')) {
+  // 已登录用户访问登录页，跳转到首页
+  if (to.path === '/login' && userToken) {
+    next('/')
+    return
+  }
+  
+  // 前台路由（除了登录页和 OAuth 回调页）需要用户登录
+  if (to.path !== '/login' && to.path !== '/admin/login' && to.path !== '/oauth/callback' && !to.path.startsWith('/admin')) {
     if (!userToken) {
       next('/login')
       return

@@ -1,9 +1,11 @@
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap');
-
 * {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
+}
+
+html {
+  height: 100%;
 }
 
 body {
@@ -13,10 +15,21 @@ body {
   background-color: #0f0f11; /* 深色背景作为酸性风格的基底 */
   color: #e0e0e0;
   overflow-x: hidden;
+  min-height: 100vh;
+  min-height: 100dvh;
+  -webkit-text-size-adjust: 100%;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
 }
 
 // 酸性 + 毛玻璃 + 拟物 风格变量
 :root {
+  color-scheme: dark;
   // 酸性色彩 (Acid Colors)
   --acid-green: #ccff00;
   --acid-purple: #b026ff;
@@ -70,9 +83,26 @@ body {
   --duration-fast: 180ms;
   --duration: 260ms;
   --duration-leave: 120ms;
+
+  // Layout tokens
+  --page-padding: 24px;
+  --header-height: 72px;
+  --safe-top: 0px;
+  --safe-right: 0px;
+  --safe-bottom: 0px;
+  --safe-left: 0px;
 }
 
 // 全局背景动画容器 (用于放置流体光斑)
+@supports (padding: env(safe-area-inset-top)) {
+  :root {
+    --safe-top: env(safe-area-inset-top);
+    --safe-right: env(safe-area-inset-right);
+    --safe-bottom: env(safe-area-inset-bottom);
+    --safe-left: env(safe-area-inset-left);
+  }
+}
+
 #app::before {
   content: '';
   position: fixed;
@@ -93,6 +123,20 @@ body {
 @keyframes fluid-move {
   0% { transform: translate(0, 0) rotate(0deg); }
   100% { transform: translate(-5%, -5%) rotate(5deg); }
+}
+
+@media (max-width: 768px) {
+  :root {
+    --page-padding: 16px;
+    --header-height: 60px;
+    --blur-amount: 12px;
+    --card-radius: 18px;
+  }
+
+  #app::before {
+    filter: blur(46px);
+    animation: none;
+  }
 }
 
 // 滚动条美化

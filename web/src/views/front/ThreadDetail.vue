@@ -14,9 +14,9 @@
       <div class="thread-meta">
         <div class="author-info">
           <div class="avatar-wrapper">
-            <el-avatar :size="40" :src="thread.author.avatar" class="author-avatar">
+            <CachedAvatar :size="40" :src="thread.author.avatar" avatar-class="author-avatar">
               {{ (thread.author.nickname || thread.author.username)[0] }}
-            </el-avatar>
+            </CachedAvatar>
           </div>
           <div class="author-details">
             <span class="author-name">{{ thread.author.nickname || thread.author.username }}</span>
@@ -55,9 +55,9 @@
       <div v-for="reply in replies" :key="reply.id" class="glass-card reply-card">
         <div class="floor-header">
           <div class="floor-left">
-            <el-avatar :size="32" :src="reply.author.avatar" class="reply-avatar">
+            <CachedAvatar :size="32" :src="reply.author.avatar" avatar-class="reply-avatar">
               {{ (reply.author.nickname || reply.author.username)[0] }}
-            </el-avatar>
+            </CachedAvatar>
             <span class="author-name">{{ reply.author.nickname || reply.author.username }}</span>
             <span class="floor-num">#{{ reply.floor_num }}</span>
           </div>
@@ -110,6 +110,7 @@ import { getThreadDetailCache, setThreadDetailCache } from '../../state/dataCach
 import { ArrowLeft } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
 import MarkdownContent from '../../components/MarkdownContent.vue'
+import CachedAvatar from '../../components/CachedAvatar.vue'
 
 const route = useRoute()
 const threadId = computed(() => route.params.id)
@@ -394,5 +395,140 @@ loadThread()
   margin-top: 40px;
   display: flex;
   justify-content: center;
+}
+
+@media (max-width: 768px) {
+  .thread-detail {
+    max-width: 100%;
+    margin: 0;
+  }
+  
+  .back-btn {
+    margin-bottom: 16px;
+  }
+  
+  .glass-card {
+    padding: 16px;
+    border-radius: 12px;
+    margin-bottom: 16px; /* 减小卡片间距 */
+  }
+  
+  .thread-card {
+    margin-bottom: 24px;
+
+    .thread-title {
+      font-size: 20px; /* 24 -> 20 */
+      margin-bottom: 16px;
+      line-height: 1.4;
+    }
+    
+    .thread-meta {
+      padding-bottom: 16px;
+      margin-bottom: 16px;
+      gap: 12px;
+      
+      .author-info {
+        gap: 10px;
+        
+        .avatar-wrapper {
+          width: 36px; /* 44 -> 36 */
+          height: 36px;
+          
+          :deep(.author-avatar) {
+            width: 32px;
+            height: 32px;
+          }
+        }
+        
+        .author-details {
+          .author-name {
+            font-size: 14px;
+          }
+        }
+      }
+      
+      .meta-right {
+        width: 100%;
+        flex-direction: row;
+        justify-content: space-between;
+        align-items: center;
+        padding-top: 12px;
+        border-top: 1px dashed rgba(255, 255, 255, 0.1);
+        font-size: 11px;
+      }
+    }
+  }
+  
+  .section-header {
+    margin-bottom: 16px;
+    h3 {
+      font-size: 16px;
+    }
+  }
+  
+  .reply-card {
+    padding: 16px;
+    margin-bottom: 12px;
+    
+    .floor-header {
+      margin-bottom: 12px;
+      
+      .floor-left {
+        gap: 8px;
+        
+        /* 调整头像大小 */
+        :deep(.reply-avatar) {
+          width: 28px;
+          height: 28px;
+          font-size: 12px;
+          line-height: 28px;
+        }
+
+        .author-name {
+          font-size: 14px;
+          max-width: 120px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        
+        .floor-num {
+          font-size: 12px;
+        }
+      }
+      
+      .floor-time {
+        font-size: 11px;
+      }
+    }
+  }
+
+  /* 内容区域字体适配 */
+  .markdown-body {
+    font-size: 15px;
+    line-height: 1.6;
+  }
+
+  .sub-replies-container {
+    padding: 12px;
+    margin-top: 12px;
+    
+    .sub-reply-item {
+      .sub-meta {
+        font-size: 12px;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        
+        .sub-author {
+          font-weight: 600;
+        }
+      }
+      
+      .sub-content {
+        font-size: 13px;
+      }
+    }
+  }
 }
 </style>

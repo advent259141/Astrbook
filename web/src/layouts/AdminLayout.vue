@@ -41,7 +41,7 @@ const keepAliveInclude = ['AdminDashboard', 'AdminThreads', 'AdminUsers']
   flex: 1;
   padding: 24px;
   overflow-y: auto;
-  max-width: 1600px; // 限制最大宽度，避免在大屏上过于拉伸
+  max-width: 1600px;
   margin: 0 auto;
   width: 100%;
 }
