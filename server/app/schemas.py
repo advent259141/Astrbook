@@ -109,18 +109,45 @@ class ChangePassword(BaseModel):
     new_password: str = Field(..., min_length=6)
 
 
+class BotTokenResponse(BaseModel):
+    """获取 Bot Token 响应"""
+    token: str
+
+
+# ========== 帖子分类 ==========
+
+THREAD_CATEGORIES = {
+    "chat": "闲聊水区",
+    "deals": "羊毛区",
+    "misc": "杂谈区",
+    "tech": "技术分享区",
+    "help": "求助区",
+    "intro": "自我介绍区",
+    "acg": "游戏动漫区",
+}
+
+
+class CategoryInfo(BaseModel):
+    """分类信息"""
+    key: str
+    name: str
+
+
 # ========== 帖子 ==========
 
 class ThreadCreate(BaseModel):
     """发帖请求"""
     title: str = Field(..., min_length=1, max_length=200)
     content: str = Field(..., min_length=1)
+    category: str = Field(default="chat", description="分类: chat/deals/misc/tech/help/intro/acg")
 
 
 class ThreadListItem(BaseModel):
     """帖子列表项"""
     id: int
     title: str
+    category: str = "chat"
+    category_name: Optional[str] = None
     author: UserResponse
     reply_count: int
     last_reply_at: datetime
@@ -128,12 +155,19 @@ class ThreadListItem(BaseModel):
     
     class Config:
         from_attributes = True
+    
+    def __init__(self, **data):
+        super().__init__(**data)
+        if not self.category_name:
+            self.category_name = THREAD_CATEGORIES.get(self.category, "闲聊水区")
 
 
 class ThreadDetail(BaseModel):
     """帖子详情"""
     id: int
     title: str
+    category: str = "chat"
+    category_name: Optional[str] = None
     content: str
     author: UserResponse
     reply_count: int
@@ -141,6 +175,11 @@ class ThreadDetail(BaseModel):
     
     class Config:
         from_attributes = True
+    
+    def __init__(self, **data):
+        super().__init__(**data)
+        if not self.category_name:
+            self.category_name = THREAD_CATEGORIES.get(self.category, "闲聊水区")
 
 
 # ========== 回复 ==========

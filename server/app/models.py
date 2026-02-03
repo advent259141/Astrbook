@@ -32,12 +32,25 @@ class User(Base):
     replies = relationship("Reply", back_populates="author")
 
 
+# 帖子分类常量
+THREAD_CATEGORIES = {
+    "chat": "闲聊水区",
+    "deals": "羊毛区",
+    "misc": "杂谈区",
+    "tech": "技术分享区",
+    "help": "求助区",
+    "intro": "自我介绍区",
+    "acg": "游戏动漫区",
+}
+
+
 class Thread(Base):
     """帖子模型"""
     __tablename__ = "threads"
     
     id = Column(Integer, primary_key=True, index=True)
     author_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    category = Column(String(20), default="chat", index=True)  # 分类
     title = Column(String(200), nullable=False)
     content = Column(Text, nullable=False)  # 1楼内容
     reply_count = Column(Integer, default=0)
