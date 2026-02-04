@@ -5,7 +5,7 @@ from sqlalchemy import func
 from typing import Literal
 from datetime import datetime
 from ..database import get_db
-from ..models import User, Thread, Reply
+from ..models import User, Thread, Reply, Notification
 from ..schemas import (
     ReplyCreate, SubReplyCreate, ReplyResponse, 
     SubReplyResponse, PaginatedResponse
@@ -76,7 +76,7 @@ async def create_reply(
     
     db.flush()  # 先 flush 获取 reply.id
     
-    # 创建通知：通知帖子作者有人回复
+    # 创建通知：通知帖子作者有人回复（带 WebSocket 推送）
     create_notification(
         db=db,
         user_id=thread.author_id,
@@ -84,7 +84,9 @@ async def create_reply(
         type="reply",
         thread_id=thread_id,
         reply_id=reply.id,
-        content_preview=data.content
+        content_preview=data.content,
+        thread_title=thread.title,
+        from_username=current_user.nickname or current_user.username
     )
     
     # 解析 @ 并创建通知
@@ -98,7 +100,9 @@ async def create_reply(
                 type="mention",
                 thread_id=thread_id,
                 reply_id=reply.id,
-                content_preview=data.content
+                content_preview=data.content,
+                thread_title=thread.title,
+                from_username=current_user.nickname or current_user.username
             )
     
     db.commit()
@@ -111,7 +115,8 @@ async def create_reply(
         content=reply.content,
         sub_replies=[],
         sub_reply_count=0,
-        created_at=reply.created_at
+        created_at=reply.created_at,
+        is_mine=True  # 自己发的回复
     )
 
 
@@ -168,7 +173,8 @@ async def list_sub_replies(
             author=sub.author,
             content=sub.content,
             reply_to=sub.reply_to.author if sub.reply_to else None,
-            created_at=sub.created_at
+            created_at=sub.created_at,
+            is_mine=sub.author_id == current_user.id
         )
         for sub in sub_replies
     ]
@@ -181,7 +187,8 @@ async def list_sub_replies(
             content=parent.content,
             sub_replies=[],
             sub_reply_count=total,
-            created_at=parent.created_at
+            created_at=parent.created_at,
+            is_mine=parent.author_id == current_user.id
         )
         text = LLMSerializer.sub_replies(
             parent_response, items, page, total, page_size, total_pages
@@ -265,7 +272,12 @@ async def create_sub_reply(
     
     db.flush()  # 先 flush 获取 sub_reply.id
     
-    # 创建通知：通知父楼层作者
+    # 获取帖子标题（用于 WebSocket 推送）
+    thread = db.query(Thread).filter(Thread.id == parent.thread_id).first()
+    thread_title = thread.title if thread else ""
+    from_username = current_user.nickname or current_user.username
+    
+    # 创建通知：通知父楼层作者（带 WebSocket 推送）
     create_notification(
         db=db,
         user_id=parent.author_id,
@@ -273,7 +285,9 @@ async def create_sub_reply(
         type="sub_reply",
         thread_id=parent.thread_id,
         reply_id=sub_reply.id,
-        content_preview=data.content
+        content_preview=data.content,
+        thread_title=thread_title,
+        from_username=from_username
     )
     
     # 如果 reply_to 存在且不是父楼层作者，也通知被回复的人
@@ -285,7 +299,9 @@ async def create_sub_reply(
             type="sub_reply",
             thread_id=parent.thread_id,
             reply_id=sub_reply.id,
-            content_preview=data.content
+            content_preview=data.content,
+            thread_title=thread_title,
+            from_username=from_username
         )
     
     # 解析 @ 并创建通知
@@ -303,7 +319,9 @@ async def create_sub_reply(
                 type="mention",
                 thread_id=parent.thread_id,
                 reply_id=sub_reply.id,
-                content_preview=data.content
+                content_preview=data.content,
+                thread_title=thread_title,
+                from_username=from_username
             )
     
     db.commit()
@@ -314,7 +332,8 @@ async def create_sub_reply(
         author=sub_reply.author,
         content=sub_reply.content,
         reply_to=reply_to.author if reply_to else None,
-        created_at=sub_reply.created_at
+        created_at=sub_reply.created_at,
+        is_mine=True  # 自己发的楼中楼
     )
 
 
@@ -341,9 +360,29 @@ async def delete_reply(
             detail="只能删除自己的回复"
         )
     
-    # 如果是主楼层，删除所有楼中楼
+    # 如果是主楼层，先获取所有楼中楼的ID
+    sub_reply_ids = []
     if reply.parent_id is None:
-        db.query(Reply).filter(Reply.parent_id == reply_id).delete()
+        sub_reply_ids = [r.id for r in db.query(Reply.id).filter(Reply.parent_id == reply_id).all()]
+    
+    # 删除相关通知（外键约束）
+    all_reply_ids = sub_reply_ids + [reply_id]
+    db.query(Notification).filter(Notification.reply_id.in_(all_reply_ids)).delete(synchronize_session=False)
+    
+    # 如果是主楼层，先清除楼中楼的 reply_to_id 引用，再删除楼中楼
+    if reply.parent_id is None and sub_reply_ids:
+        # 清除 reply_to_id 引用（避免外键约束）
+        db.query(Reply).filter(Reply.parent_id == reply_id).update(
+            {Reply.reply_to_id: None}, synchronize_session=False
+        )
+        # 删除所有楼中楼
+        db.query(Reply).filter(Reply.parent_id == reply_id).delete(synchronize_session=False)
+    
+    # 如果是楼中楼，清除其他楼中楼对它的 reply_to_id 引用
+    if reply.parent_id is not None:
+        db.query(Reply).filter(Reply.reply_to_id == reply_id).update(
+            {Reply.reply_to_id: None}, synchronize_session=False
+        )
     
     db.delete(reply)
     db.commit()

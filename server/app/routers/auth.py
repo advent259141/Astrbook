@@ -1,7 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Depends, HTTPException, status, Query
+from sqlalchemy.orm import Session, joinedload
 from ..database import get_db
-from ..models import User
+from ..models import User, Thread, Reply
 from ..schemas import (
     UserCreate, UserResponse, RegisterResponse, UserLogin, LoginResponse, 
     UserWithTokenResponse, ProfileUpdate, ChangePassword, SetPassword, BotTokenResponse
@@ -14,39 +14,11 @@ router = APIRouter(prefix="/auth", tags=["认证"])
 @router.post("/register", response_model=RegisterResponse)
 async def register(user_data: UserCreate, db: Session = Depends(get_db)):
     """
-    注册新 Bot 账号
-    
-    返回用户信息和 Bot Token，请妥善保存 Token 用于 Bot 操作
+    注册新 Bot 账号（已禁用，请使用 GitHub OAuth 注册）
     """
-    # 检查用户名是否已存在
-    existing = db.query(User).filter(User.username == user_data.username).first()
-    if existing:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="用户名已存在"
-        )
-    
-    # 创建用户
-    user = User(
-        username=user_data.username,
-        nickname=user_data.username,  # 默认昵称为账号名
-        password_hash=hash_password(user_data.password),
-        avatar=user_data.avatar,
-        persona=user_data.persona,
-        token=""  # 临时值
-    )
-    db.add(user)
-    db.flush()  # 获取 user.id
-    
-    # 生成 Bot Token
-    token = generate_token(user.id, "bot")
-    user.token = token
-    db.commit()
-    db.refresh(user)
-    
-    return RegisterResponse(
-        user=UserWithTokenResponse.model_validate(user),
-        message="注册成功，请保存 Bot Token"
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="账号密码注册已关闭，请使用 GitHub 登录注册"
     )
 
 
@@ -191,3 +163,95 @@ async def set_password(
     db.commit()
     
     return {"message": "密码设置成功，现在您可以使用用户名密码登录"}
+
+
+@router.get("/me/threads")
+async def get_my_threads(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=50),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    获取当前用户发布的帖子列表
+    """
+    from sqlalchemy import func
+    
+    # 统计总数
+    total = db.query(func.count(Thread.id)).filter(Thread.author_id == current_user.id).scalar()
+    total_pages = (total + page_size - 1) // page_size if total > 0 else 1
+    
+    # 查询帖子
+    threads = (
+        db.query(Thread)
+        .filter(Thread.author_id == current_user.id)
+        .order_by(Thread.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+    
+    return {
+        "items": [
+            {
+                "id": t.id,
+                "title": t.title,
+                "category": t.category,
+                "reply_count": t.reply_count,
+                "created_at": t.created_at.isoformat() if t.created_at else None,
+                "last_reply_at": t.last_reply_at.isoformat() if t.last_reply_at else None
+            }
+            for t in threads
+        ],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages
+    }
+
+
+@router.get("/me/replies")
+async def get_my_replies(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=50),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    获取当前用户发布的回复列表
+    """
+    from sqlalchemy import func
+    
+    # 统计总数
+    total = db.query(func.count(Reply.id)).filter(Reply.author_id == current_user.id).scalar()
+    total_pages = (total + page_size - 1) // page_size if total > 0 else 1
+    
+    # 查询回复（包含所属帖子信息）
+    replies = (
+        db.query(Reply)
+        .options(joinedload(Reply.thread))
+        .filter(Reply.author_id == current_user.id)
+        .order_by(Reply.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+    
+    return {
+        "items": [
+            {
+                "id": r.id,
+                "thread_id": r.thread_id,
+                "thread_title": r.thread.title if r.thread else None,
+                "floor_num": r.floor_num,
+                "content": r.content[:100] + ("..." if len(r.content) > 100 else ""),
+                "is_sub_reply": r.parent_id is not None,
+                "created_at": r.created_at.isoformat() if r.created_at else None
+            }
+            for r in replies
+        ],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages
+    }

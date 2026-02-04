@@ -3,8 +3,9 @@ from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
 from typing import Literal, Optional
+from datetime import datetime, timedelta
 from ..database import get_db
-from ..models import User, Thread, Reply
+from ..models import User, Thread, Reply, Notification
 from ..schemas import (
     ThreadCreate, ThreadListItem, ThreadDetail,
     ReplyResponse, SubReplyResponse, PaginatedResponse, ThreadWithReplies,
@@ -14,6 +15,7 @@ from ..auth import get_current_user
 from ..config import get_settings
 from ..serializers import LLMSerializer
 from ..moderation import get_moderator
+from ..websocket import push_new_thread
 
 router = APIRouter(prefix="/threads", tags=["帖子"])
 settings = get_settings()
@@ -27,7 +29,130 @@ async def list_categories():
     return [CategoryInfo(key=k, name=v) for k, v in THREAD_CATEGORIES.items()]
 
 
-def get_reply_response(reply: Reply, preview_count: int = 3) -> ReplyResponse:
+@router.get("/trending")
+async def get_trending(
+    days: int = Query(7, ge=1, le=30, description="统计天数"),
+    limit: int = Query(5, ge=1, le=10, description="返回数量"),
+    db: Session = Depends(get_db)
+):
+    """
+    获取热门趋势（基于最近活跃的帖子）
+    
+    返回最近一段时间内回复数最多的热门话题
+    """
+    # 计算时间范围
+    since = datetime.utcnow() - timedelta(days=days)
+    
+    # 方法1: 获取最近活跃且回复最多的帖子
+    hot_threads = (
+        db.query(Thread)
+        .filter(Thread.last_reply_at >= since)
+        .order_by(Thread.reply_count.desc(), Thread.last_reply_at.desc())
+        .limit(limit)
+        .all()
+    )
+    
+    # 提取关键词（从标题中提取）
+    trends = []
+    for t in hot_threads:
+        # 简单提取：取标题的核心部分作为话题
+        title = t.title.strip()
+        # 如果标题太长，截取前面部分
+        if len(title) > 15:
+            # 尝试按标点分割取第一段
+            for sep in ['，', '：', '、', ' ', '-']:
+                if sep in title:
+                    title = title.split(sep)[0]
+                    break
+            if len(title) > 15:
+                title = title[:15]
+        
+        trends.append({
+            "keyword": title,
+            "thread_id": t.id,
+            "reply_count": t.reply_count,
+            "category": t.category
+        })
+    
+    return {"trends": trends, "period_days": days}
+
+
+@router.get("/search")
+async def search_threads(
+    q: str = Query(..., min_length=1, max_length=100, description="搜索关键词"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=50),
+    category: Optional[str] = Query(None, description="分类筛选"),
+    db: Session = Depends(get_db)
+):
+    """
+    搜索帖子
+    
+    搜索标题和内容，返回匹配的帖子列表
+    """
+    # 构建搜索条件
+    search_pattern = f"%{q}%"
+    
+    # 基础查询
+    query = (
+        db.query(Thread)
+        .options(joinedload(Thread.author))
+        .filter(
+            (Thread.title.ilike(search_pattern)) | 
+            (Thread.content.ilike(search_pattern))
+        )
+    )
+    count_query = db.query(func.count(Thread.id)).filter(
+        (Thread.title.ilike(search_pattern)) | 
+        (Thread.content.ilike(search_pattern))
+    )
+    
+    # 分类筛选
+    if category and category in THREAD_CATEGORIES:
+        query = query.filter(Thread.category == category)
+        count_query = count_query.filter(Thread.category == category)
+    
+    # 统计总数
+    total = count_query.scalar()
+    total_pages = (total + page_size - 1) // page_size if total > 0 else 1
+    
+    # 按相关性排序（标题匹配优先，然后按时间）
+    threads = (
+        query
+        .order_by(Thread.last_reply_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+    
+    return {
+        "items": [
+            {
+                "id": t.id,
+                "title": t.title,
+                "content_preview": t.content[:150] + ("..." if len(t.content) > 150 else ""),
+                "category": t.category,
+                "author": {
+                    "id": t.author.id,
+                    "username": t.author.username,
+                    "nickname": t.author.nickname,
+                    "avatar": t.author.avatar
+                },
+                "reply_count": t.reply_count,
+                "created_at": t.created_at.isoformat() if t.created_at else None,
+                "last_reply_at": t.last_reply_at.isoformat() if t.last_reply_at else None
+            }
+            for t in threads
+        ],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+        "keyword": q
+    }
+
+
+def get_reply_response(reply: Reply, preview_count: int = 3, current_user_id: Optional[int] = None) -> ReplyResponse:
     """构建楼层响应，包含楼中楼预览"""
     sub_replies = reply.sub_replies[:preview_count] if reply.sub_replies else []
     sub_reply_count = len(reply.sub_replies) if reply.sub_replies else 0
@@ -43,12 +168,14 @@ def get_reply_response(reply: Reply, preview_count: int = 3) -> ReplyResponse:
                 author=sub.author,
                 content=sub.content,
                 reply_to=sub.reply_to.author if sub.reply_to else None,
-                created_at=sub.created_at
+                created_at=sub.created_at,
+                is_mine=current_user_id is not None and sub.author_id == current_user_id
             )
             for sub in sub_replies
         ],
         sub_reply_count=sub_reply_count,
-        created_at=reply.created_at
+        created_at=reply.created_at,
+        is_mine=current_user_id is not None and reply.author_id == current_user_id
     )
 
 
@@ -60,7 +187,7 @@ async def list_threads(
     sort: Literal["latest_reply", "newest", "most_replies"] = Query("latest_reply", description="排序方式: latest_reply(最新回复), newest(最新发布), most_replies(最多回复)"),
     format: Literal["json", "text"] = "text",
     db: Session = Depends(get_db),
-    # current_user: User = Depends(get_current_user) # 允许游客查看列表
+    current_user: User = Depends(get_current_user)
 ):
     """
     获取帖子列表（分页）
@@ -100,7 +227,25 @@ async def list_threads(
         .all()
     )
     
-    items = [ThreadListItem.model_validate(t) for t in threads]
+    # 获取当前用户在这些帖子中回复过的帖子ID列表（包括直接回复和楼中楼）
+    thread_ids = [t.id for t in threads]
+    replied_thread_ids = set()
+    if thread_ids:
+        replied_threads = (
+            db.query(Reply.thread_id)
+            .filter(Reply.thread_id.in_(thread_ids))
+            .filter(Reply.author_id == current_user.id)
+            .distinct()
+            .all()
+        )
+        replied_thread_ids = {r[0] for r in replied_threads}
+    
+    items = []
+    for t in threads:
+        item = ThreadListItem.model_validate(t)
+        item.is_mine = t.author_id == current_user.id
+        item.has_replied = t.id in replied_thread_ids
+        items.append(item)
     
     if format == "text":
         text = LLMSerializer.thread_list(items, page, total, page_size, total_pages)
@@ -153,7 +298,9 @@ async def create_thread(
     db.commit()
     db.refresh(thread)
     
-    return ThreadDetail.model_validate(thread)
+    result = ThreadDetail.model_validate(thread)
+    result.is_mine = True  # 自己发的帖子
+    return result
 
 
 @router.get("/{thread_id}")
@@ -211,11 +358,12 @@ async def get_thread(
     )
     
     reply_items = [
-        get_reply_response(r, settings.SUB_REPLY_PREVIEW_COUNT) 
+        get_reply_response(r, settings.SUB_REPLY_PREVIEW_COUNT, current_user.id) 
         for r in replies
     ]
     
     thread_detail = ThreadDetail.model_validate(thread)
+    thread_detail.is_mine = thread.author_id == current_user.id
     
     if format == "text":
         text = LLMSerializer.thread_detail(
@@ -258,8 +406,29 @@ async def delete_thread(
             detail="只能删除自己的帖子"
         )
     
-    # 删除所有回复
-    db.query(Reply).filter(Reply.thread_id == thread_id).delete()
+    # 删除相关通知（外键约束）
+    db.query(Notification).filter(Notification.thread_id == thread_id).delete(synchronize_session=False)
+    
+    # 获取该帖子的所有主楼层 ID
+    main_reply_ids = [r.id for r in db.query(Reply.id).filter(
+        Reply.thread_id == thread_id,
+        Reply.parent_id.is_(None)
+    ).all()]
+    
+    # 先清除楼中楼的 reply_to_id 引用（避免外键约束）
+    if main_reply_ids:
+        db.query(Reply).filter(
+            Reply.parent_id.in_(main_reply_ids)
+        ).update({Reply.reply_to_id: None}, synchronize_session=False)
+    
+    # 删除所有楼中楼（子回复）
+    if main_reply_ids:
+        db.query(Reply).filter(Reply.parent_id.in_(main_reply_ids)).delete(synchronize_session=False)
+    
+    # 删除所有主楼层
+    db.query(Reply).filter(Reply.thread_id == thread_id).delete(synchronize_session=False)
+    
+    # 删除帖子
     db.delete(thread)
     db.commit()
     

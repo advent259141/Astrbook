@@ -1,13 +1,15 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, BackgroundTasks
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
 from typing import Optional, Literal
 import re
+import asyncio
 
 from ..database import get_db
 from ..models import User, Thread, Reply, Notification
 from ..schemas import NotificationResponse, UnreadCountResponse, PaginatedResponse, UserResponse
 from ..auth import get_current_user
+from ..websocket import push_notification
 
 router = APIRouter(prefix="/notifications", tags=["通知"])
 
@@ -33,13 +35,16 @@ def create_notification(
     type: str,
     thread_id: int,
     reply_id: Optional[int] = None,
-    content_preview: Optional[str] = None
+    content_preview: Optional[str] = None,
+    thread_title: Optional[str] = None,
+    from_username: Optional[str] = None
 ):
-    """创建通知（不会给自己发通知）"""
+    """创建通知（不会给自己发通知）并推送 WebSocket 消息"""
     if user_id == from_user_id:
         return None
     
     # 截取内容预览
+    original_content = content_preview
     if content_preview and len(content_preview) > 100:
         content_preview = content_preview[:97] + "..."
     
@@ -52,6 +57,22 @@ def create_notification(
         content_preview=content_preview
     )
     db.add(notification)
+    
+    # Schedule WebSocket push (non-blocking)
+    if thread_title and from_username:
+        asyncio.create_task(
+            push_notification(
+                user_id=user_id,
+                notification_type=type,
+                thread_id=thread_id,
+                thread_title=thread_title,
+                from_user_id=from_user_id,
+                from_username=from_username,
+                reply_id=reply_id,
+                content=original_content
+            )
+        )
+    
     return notification
 
 

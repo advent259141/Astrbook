@@ -4,7 +4,7 @@ from sqlalchemy import func, desc
 from pydantic import BaseModel
 from typing import Optional, List
 from ..database import get_db
-from ..models import User, Thread, Reply, Admin, SystemSettings, ModerationLog
+from ..models import User, Thread, Reply, Admin, SystemSettings, ModerationLog, Notification
 from ..schemas import UserResponse, PaginatedResponse, AdminLogin, AdminLoginResponse, AdminResponse, THREAD_CATEGORIES
 from ..auth import verify_admin, hash_password, verify_password, generate_token
 from ..moderation import fetch_available_models, DEFAULT_MODERATION_PROMPT
@@ -129,13 +129,47 @@ async def delete_user(
             detail="用户不存在"
         )
     
-    # 删除用户的所有帖子和回复
-    db.query(Reply).filter(Reply.author_id == user_id).delete()
+    # 获取用户的所有回复ID
+    user_reply_ids = [r.id for r in db.query(Reply.id).filter(Reply.author_id == user_id).all()]
     
+    # 获取用户帖子下的所有回复ID
     threads = db.query(Thread).filter(Thread.author_id == user_id).all()
+    thread_ids = [t.id for t in threads]
+    thread_reply_ids = []
+    if thread_ids:
+        thread_reply_ids = [r.id for r in db.query(Reply.id).filter(Reply.thread_id.in_(thread_ids)).all()]
+    
+    # 合并所有需要删除的回复ID
+    all_reply_ids = list(set(user_reply_ids + thread_reply_ids))
+    
+    # 先删除相关通知（外键约束）
+    if all_reply_ids:
+        db.query(Notification).filter(Notification.reply_id.in_(all_reply_ids)).delete(synchronize_session=False)
+    if thread_ids:
+        db.query(Notification).filter(Notification.thread_id.in_(thread_ids)).delete(synchronize_session=False)
+    # 删除该用户收到和发出的所有通知
+    db.query(Notification).filter(
+        (Notification.user_id == user_id) | (Notification.from_user_id == user_id)
+    ).delete(synchronize_session=False)
+    
+    # 清除回复中的 reply_to_id 引用（避免外键约束）
+    if all_reply_ids:
+        db.query(Reply).filter(Reply.reply_to_id.in_(all_reply_ids)).update(
+            {Reply.reply_to_id: None}, synchronize_session=False
+        )
+        db.query(Reply).filter(Reply.parent_id.in_(all_reply_ids)).update(
+            {Reply.parent_id: None}, synchronize_session=False
+        )
+    
+    # 删除用户的所有回复
+    db.query(Reply).filter(Reply.author_id == user_id).delete(synchronize_session=False)
+    
+    # 删除用户帖子下的所有回复
     for thread in threads:
-        db.query(Reply).filter(Reply.thread_id == thread.id).delete()
-    db.query(Thread).filter(Thread.author_id == user_id).delete()
+        db.query(Reply).filter(Reply.thread_id == thread.id).delete(synchronize_session=False)
+    
+    # 删除用户的帖子
+    db.query(Thread).filter(Thread.author_id == user_id).delete(synchronize_session=False)
     
     db.delete(user)
     db.commit()
@@ -160,8 +194,25 @@ async def admin_delete_thread(
             detail="帖子不存在"
         )
     
+    # 获取所有回复ID
+    reply_ids = [r.id for r in db.query(Reply.id).filter(Reply.thread_id == thread_id).all()]
+    
+    # 先删除相关通知（外键约束）
+    db.query(Notification).filter(Notification.thread_id == thread_id).delete(synchronize_session=False)
+    if reply_ids:
+        db.query(Notification).filter(Notification.reply_id.in_(reply_ids)).delete(synchronize_session=False)
+    
+    # 清除回复中的 reply_to_id 和 parent_id 引用（避免外键约束）
+    if reply_ids:
+        db.query(Reply).filter(Reply.reply_to_id.in_(reply_ids)).update(
+            {Reply.reply_to_id: None}, synchronize_session=False
+        )
+        db.query(Reply).filter(Reply.parent_id.in_(reply_ids)).update(
+            {Reply.parent_id: None}, synchronize_session=False
+        )
+    
     # 删除所有回复
-    db.query(Reply).filter(Reply.thread_id == thread_id).delete()
+    db.query(Reply).filter(Reply.thread_id == thread_id).delete(synchronize_session=False)
     db.delete(thread)
     db.commit()
     
