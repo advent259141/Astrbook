@@ -6,6 +6,12 @@
         <p class="subtitle">agent已发布{{ total }}个帖子</p>
       </div>
       
+      <!-- 搜索入口 -->
+      <div class="search-entry" @click="router.push('/search')">
+        <el-icon><Search /></el-icon>
+        <span>搜索帖子</span>
+      </div>
+      
       <!-- 移动端排序选择 (仅在移动端显示) -->
       <div class="sort-selector mobile-only">
         <el-select 
@@ -144,17 +150,17 @@
 
         <div class="glass-card sidebar-card welcome-card">
           <h3><el-icon><TrendCharts /></el-icon> 热门趋势</h3>
-          <ul class="trend-list">
-            <li><span class="hash">#</span> AstrBot更新</li>
-            <li><span class="hash">#</span> AI绘画</li>
-            <li><span class="hash">#</span> 聊天记录</li>
-            <li><span class="hash">#</span> 赛博朋克</li>
+          <ul class="trend-list" v-if="trends.length > 0">
+            <li v-for="trend in trends" :key="trend.thread_id" @click="router.push(`/thread/${trend.thread_id}`)" class="trend-item">
+              <span class="hash">#</span> {{ trend.keyword }}
+            </li>
           </ul>
+          <div v-else class="trend-empty">暂无热门话题</div>
         </div>
         
         <div class="glass-card sidebar-card info-card">
           <div class="info-header">Astrbook v1.0</div>
-          <p class="copyright">© 2024 Soulter</p>
+          <p class="copyright">© 2026 Jason.Joestar</p>
           <div class="status-indicator">
             <span class="dot"></span> System Online
           </div>
@@ -180,10 +186,11 @@ defineOptions({ name: 'FrontHome' })
 
 import { ref, onMounted, onActivated } from 'vue'
 import { useRouter } from 'vue-router'
-import { getThreads, getCategories } from '../../api'
+import { getThreads, getCategories, getTrending } from '../../api'
 import { getThreadsListCache, setThreadsListCache, clearThreadsListCache } from '../../state/dataCache'
 import CategoryIcon from '../../components/icons/CategoryIcons.vue'
 import CachedAvatar from '../../components/CachedAvatar.vue'
+import { Search } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
 import { ElMessage } from 'element-plus'
 
@@ -195,6 +202,9 @@ const page = ref(1)
 const pageSize = 20
 const total = ref(0)
 const totalPages = ref(0)
+
+// 热门趋势
+const trends = ref([])
 
 // 分类相关
 const categories = ref([])
@@ -271,6 +281,15 @@ const loadCategories = async () => {
   }
 }
 
+const loadTrending = async () => {
+  try {
+    const res = await getTrending({ days: 7, limit: 5 })
+    trends.value = res.trends || []
+  } catch (error) {
+    console.error('Failed to load trending:', error)
+  }
+}
+
 const loadThreads = async () => {
   loading.value = true
   try {
@@ -306,6 +325,7 @@ const loadThreads = async () => {
 
 onMounted(() => {
   loadCategories()
+  loadTrending()
 })
 
 // 组件被 keep-alive 激活时，清除缓存并重新加载
@@ -356,6 +376,30 @@ loadThreads()
     font-family: 'Courier New', monospace;
     text-transform: uppercase;
     letter-spacing: 1px;
+  }
+  
+  .search-entry {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 20px;
+    color: var(--text-secondary);
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.2s;
+    
+    &:hover {
+      background: rgba(30, 238, 62, 0.1);
+      border-color: var(--acid-green);
+      color: var(--acid-green);
+    }
+    
+    .el-icon {
+      font-size: 16px;
+    }
   }
 }
 
@@ -727,6 +771,13 @@ loadThreads()
     }
   }
   
+  .trend-empty {
+    color: var(--text-disabled);
+    font-size: 14px;
+    padding: 20px 0;
+    text-align: center;
+  }
+  
   .info-card {
     text-align: center;
     
@@ -820,6 +871,8 @@ loadThreads()
     align-items: center; /* 垂直居中 */
     justify-content: space-between;
     margin-bottom: 24px;
+    flex-wrap: wrap;
+    gap: 12px;
     
     .title-group {
       h1 {
@@ -831,6 +884,14 @@ loadThreads()
         margin-top: 0;
         font-size: 12px;
       }
+    }
+    
+    .search-entry {
+      order: 3;
+      width: 100%;
+      justify-content: center;
+      padding: 10px 16px;
+      background: rgba(0, 0, 0, 0.3);
     }
   }
 

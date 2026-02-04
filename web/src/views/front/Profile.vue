@@ -208,6 +208,69 @@
         </div>
       </div>
       
+      <!-- 我的帖子 -->
+      <div class="glass-card my-content-card">
+        <div class="card-header">
+          <h3 class="section-title">我的帖子</h3>
+          <span class="count-badge" v-if="myThreads.total > 0">{{ myThreads.total }}</span>
+        </div>
+        <div v-if="loadingThreads" class="loading-placeholder">
+          <el-skeleton :rows="3" animated />
+        </div>
+        <div v-else-if="myThreads.items.length === 0" class="empty-hint">
+          暂无发布的帖子
+        </div>
+        <ul v-else class="content-list">
+          <li v-for="thread in myThreads.items" :key="thread.id" @click="goToThread(thread.id)" class="content-item">
+            <div class="content-main">
+              <span class="category-tag" :class="thread.category">{{ getCategoryName(thread.category) }}</span>
+              <span class="content-title">{{ thread.title }}</span>
+            </div>
+            <div class="content-meta">
+              <span class="reply-count">{{ thread.reply_count }} 回复</span>
+              <span class="time">{{ formatTime(thread.created_at) }}</span>
+            </div>
+          </li>
+        </ul>
+        <div v-if="myThreads.total_pages > 1" class="pagination-small">
+          <button class="page-btn" :disabled="myThreads.page <= 1" @click="loadMyThreads(myThreads.page - 1)">上一页</button>
+          <span class="page-info">{{ myThreads.page }} / {{ myThreads.total_pages }}</span>
+          <button class="page-btn" :disabled="myThreads.page >= myThreads.total_pages" @click="loadMyThreads(myThreads.page + 1)">下一页</button>
+        </div>
+      </div>
+      
+      <!-- 我的回复 -->
+      <div class="glass-card my-content-card">
+        <div class="card-header">
+          <h3 class="section-title">我的回复</h3>
+          <span class="count-badge" v-if="myReplies.total > 0">{{ myReplies.total }}</span>
+        </div>
+        <div v-if="loadingReplies" class="loading-placeholder">
+          <el-skeleton :rows="3" animated />
+        </div>
+        <div v-else-if="myReplies.items.length === 0" class="empty-hint">
+          暂无发布的回复
+        </div>
+        <ul v-else class="content-list">
+          <li v-for="reply in myReplies.items" :key="reply.id" @click="goToThread(reply.thread_id)" class="content-item">
+            <div class="content-main">
+              <span class="floor-tag" v-if="reply.floor_num">{{ reply.floor_num }}楼</span>
+              <span class="floor-tag sub" v-else>楼中楼</span>
+              <span class="content-title">{{ reply.thread_title }}</span>
+            </div>
+            <div class="reply-preview">{{ reply.content }}</div>
+            <div class="content-meta">
+              <span class="time">{{ formatTime(reply.created_at) }}</span>
+            </div>
+          </li>
+        </ul>
+        <div v-if="myReplies.total_pages > 1" class="pagination-small">
+          <button class="page-btn" :disabled="myReplies.page <= 1" @click="loadMyReplies(myReplies.page - 1)">上一页</button>
+          <span class="page-info">{{ myReplies.page }} / {{ myReplies.total_pages }}</span>
+          <button class="page-btn" :disabled="myReplies.page >= myReplies.total_pages" @click="loadMyReplies(myReplies.page + 1)">下一页</button>
+        </div>
+      </div>
+      
       <!-- 第三方账号绑定 -->
       <div class="glass-card oauth-card" v-if="githubEnabled">
         <h3 class="section-title">第三方账号绑定</h3>
@@ -256,12 +319,15 @@
 <script setup>
 defineOptions({ name: 'FrontProfile' })
 
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, DocumentCopy, View, Hide, Upload, Refresh, InfoFilled } from '@element-plus/icons-vue'
-import { getBotToken, getCurrentUser, updateProfile, refreshBotToken, changeUserPassword, setUserPassword, getSecurityStatus, uploadAvatar, getGitHubConfig, getOAuthStatus, unlinkGitHub } from '../../api'
+import { getBotToken, getCurrentUser, updateProfile, refreshBotToken, changeUserPassword, setUserPassword, getSecurityStatus, uploadAvatar, getGitHubConfig, getOAuthStatus, unlinkGitHub, getMyThreads, getMyReplies } from '../../api'
 import { getCurrentUserCache, setCurrentUserCache } from '../../state/dataCache'
+import dayjs from 'dayjs'
 
+const router = useRouter()
 const user = ref(null)
 const loading = ref(true)
 const saving = ref(false)
@@ -271,6 +337,12 @@ const changingPassword = ref(false)
 const settingPassword = ref(false)
 const uploading = ref(false)
 const hasPassword = ref(true)
+
+// 我的帖子/回复
+const loadingThreads = ref(false)
+const loadingReplies = ref(false)
+const myThreads = ref({ items: [], total: 0, page: 1, total_pages: 1 })
+const myReplies = ref({ items: [], total: 0, page: 1, total_pages: 1 })
 
 // OAuth 状态
 const githubEnabled = ref(false)
@@ -512,8 +584,57 @@ const handleUnlinkGitHub = async () => {
   }
 }
 
+// 分类名称映射
+const categoryNames = {
+  chat: '闲聊',
+  deals: '羊毛',
+  misc: '杂谈',
+  tech: '技术',
+  help: '求助',
+  intro: '介绍',
+  acg: 'ACG'
+}
+
+const getCategoryName = (key) => categoryNames[key] || '闲聊'
+
+const formatTime = (time) => {
+  if (!time) return ''
+  return dayjs(time).format('MM-DD HH:mm')
+}
+
+const goToThread = (threadId) => {
+  router.push(`/thread/${threadId}`)
+}
+
+const loadMyThreads = async (page = 1) => {
+  loadingThreads.value = true
+  try {
+    const res = await getMyThreads({ page, page_size: 5 })
+    myThreads.value = res
+  } catch (error) {
+    console.error('加载帖子失败', error)
+  } finally {
+    loadingThreads.value = false
+  }
+}
+
+const loadMyReplies = async (page = 1) => {
+  loadingReplies.value = true
+  try {
+    const res = await getMyReplies({ page, page_size: 5 })
+    myReplies.value = res
+  } catch (error) {
+    console.error('加载回复失败', error)
+  } finally {
+    loadingReplies.value = false
+  }
+}
+
+// 初始化加载
 loadUser()
 checkGitHubConfig()
+loadMyThreads(1)
+loadMyReplies(1)
 </script>
 
 <style lang="scss" scoped>
@@ -863,6 +984,156 @@ checkGitHubConfig()
   .el-input__count-inner {
     background: transparent;
     color: inherit;
+  }
+}
+
+/* 我的帖子/回复卡片 */
+.my-content-card {
+  .card-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  }
+  
+  .count-badge {
+    background: rgba(30, 238, 62, 0.15);
+    color: var(--acid-green);
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  
+  .loading-placeholder {
+    padding: 20px 0;
+  }
+  
+  .empty-hint {
+    color: var(--text-disabled);
+    text-align: center;
+    padding: 30px 0;
+    font-size: 14px;
+  }
+  
+  .content-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+  
+  .content-item {
+    padding: 12px 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+    cursor: pointer;
+    transition: all 0.2s;
+    
+    &:hover {
+      background: rgba(255, 255, 255, 0.02);
+      margin: 0 -16px;
+      padding: 12px 16px;
+    }
+    
+    &:last-child {
+      border-bottom: none;
+    }
+  }
+  
+  .content-main {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+  
+  .category-tag {
+    font-size: 11px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text-secondary);
+    
+    &.tech { background: rgba(30, 238, 62, 0.15); color: var(--acid-green); }
+    &.help { background: rgba(255, 100, 100, 0.15); color: #ff6464; }
+    &.deals { background: rgba(255, 200, 50, 0.15); color: #ffc832; }
+    &.acg { background: rgba(200, 100, 255, 0.15); color: #c864ff; }
+  }
+  
+  .floor-tag {
+    font-size: 11px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(30, 238, 62, 0.15);
+    color: var(--acid-green);
+    
+    &.sub {
+      background: rgba(255, 255, 255, 0.1);
+      color: var(--text-secondary);
+    }
+  }
+  
+  .content-title {
+    color: var(--text-primary);
+    font-size: 14px;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  
+  .reply-preview {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  
+  .content-meta {
+    display: flex;
+    gap: 12px;
+    font-size: 12px;
+    color: var(--text-disabled);
+  }
+  
+  .pagination-small {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+    
+    .page-btn {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: var(--text-secondary);
+      padding: 4px 12px;
+      border-radius: 4px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.2s;
+      
+      &:hover:not(:disabled) {
+        background: rgba(30, 238, 62, 0.1);
+        border-color: var(--acid-green);
+        color: var(--acid-green);
+      }
+      
+      &:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+      }
+    }
+    
+    .page-info {
+      font-size: 12px;
+      color: var(--text-disabled);
+    }
   }
 }
 

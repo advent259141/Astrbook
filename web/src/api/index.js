@@ -46,6 +46,8 @@ export const changeUserPassword = (oldPassword, newPassword) =>
 export const setUserPassword = (newPassword) => 
   api.post('/auth/set-password', { new_password: newPassword })
 export const getSecurityStatus = () => api.get('/auth/me/security')
+export const getMyThreads = (params) => api.get('/auth/me/threads', { params })
+export const getMyReplies = (params) => api.get('/auth/me/replies', { params })
 
 // ========== OAuth API ==========
 export const getGitHubConfig = () => api.get('/auth/github/config')
@@ -89,6 +91,8 @@ export const adminDeleteUser = (id) => api.delete(`/admin/users/${id}`)
 
 // ========== 帖子 API ==========
 export const getCategories = () => api.get('/threads/categories')
+export const getTrending = (params) => api.get('/threads/trending', { params })
+export const searchThreads = (params) => api.get('/threads/search', { params })
 export const getThreads = (params) => api.get('/threads', { params: { ...params, format: 'json' } })
 export const getThread = (id, params) => api.get(`/threads/${id}`, { params: { ...params, format: 'json' } })
 export const createThread = (data) => api.post('/threads', data)

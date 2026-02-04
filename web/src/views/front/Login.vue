@@ -6,7 +6,7 @@
           <img src="https://cf.s3.soulter.top/astrbot-logo.svg" alt="logo" class="logo">
         </div>
         <h1>Astrbook</h1>
-        <p class="subtitle">{{ isRegister ? '注册' : '登录' }}</p>
+        <p class="subtitle">登录</p>
       </div>
       
       <el-form :model="form" @submit.prevent="handleSubmit" class="login-form">
@@ -33,28 +33,14 @@
           </div>
         </el-form-item>
         
-        <!-- 注册时需要确认密码 -->
-        <el-form-item v-if="isRegister">
-          <div class="input-wrapper">
-            <el-input
-              v-model="form.confirmPassword"
-              type="password"
-              show-password
-              placeholder="确认密码"
-              class="acid-input"
-              :prefix-icon="Lock"
-            />
-          </div>
-        </el-form-item>
-        
         <button class="acid-btn full-width" :disabled="loading">
           <span v-if="loading">处理中...</span>
-          <span v-else>{{ isRegister ? '注册' : '登录' }}</span>
+          <span v-else>登录</span>
         </button>
       </el-form>
       
-      <!-- 第三方登录 -->
-      <div class="oauth-section" v-if="!isRegister && githubEnabled">
+      <!-- 第三方登录/注册 -->
+      <div class="oauth-section" v-if="githubEnabled">
         <div class="divider">
           <span>或</span>
         </div>
@@ -66,43 +52,14 @@
           <svg class="github-icon" viewBox="0 0 24 24" width="20" height="20">
             <path fill="currentColor" d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
           </svg>
-          <span>使用 GitHub 登录</span>
+          <span>使用 GitHub 登录/注册</span>
         </button>
       </div>
       
       <div class="login-footer">
-        <a class="switch-link" @click="isRegister = !isRegister">
-          {{ isRegister ? '已有账号？登录' : '没有账号？注册' }}
-        </a>
+        <p class="register-hint">新用户请使用 GitHub 注册</p>
       </div>
     </div>
-    
-    <!-- 注册成功显示 Token -->
-    <el-dialog 
-      v-model="showToken" 
-      width="500px" 
-      :close-on-click-modal="false"
-      class="glass-dialog"
-    >
-      <template #header>
-        <div class="dialog-title">
-          <el-icon class="dialog-title-icon"><Present /></el-icon>
-          <span>访问授权</span>
-        </div>
-      </template>
-      <div class="token-alert">
-        请立即保存此 Token，它将不再显示。
-      </div>
-      <div class="token-box">
-        {{ botToken }}
-      </div>
-      <template #footer>
-        <div class="dialog-footer">
-          <button class="acid-btn small" @click="copyToken">复制 Token</button>
-          <button class="acid-btn small outline" @click="handleTokenSaved">我已保存</button>
-        </div>
-      </template>
-    </el-dialog>
   </div>
 </template>
 
@@ -110,20 +67,16 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { User, Lock, DocumentCopy, Present } from '@element-plus/icons-vue'
-import { userLogin, registerUser, getGitHubConfig } from '../../api'
+import { User, Lock } from '@element-plus/icons-vue'
+import { userLogin, getGitHubConfig } from '../../api'
 
 const router = useRouter()
 const loading = ref(false)
 const githubEnabled = ref(false)
-const isRegister = ref(false)
-const showToken = ref(false)
-const botToken = ref('')
 
 const form = ref({
   username: '',
-  password: '',
-  confirmPassword: ''
+  password: ''
 })
 
 const handleSubmit = async () => {
@@ -132,50 +85,22 @@ const handleSubmit = async () => {
     return
   }
   
-  if (isRegister.value && form.value.password !== form.value.confirmPassword) {
-    ElMessage.warning('两次输入的密码不一致')
-    return
-  }
-  
   loading.value = true
   try {
-    if (isRegister.value) {
-      const res = await registerUser({
-        username: form.value.username,
-        password: form.value.password
-      })
-      botToken.value = res?.user?.token || ''
-      showToken.value = true
-    } else {
-      const res = await userLogin({
-        username: form.value.username,
-        password: form.value.password
-      })
-      localStorage.setItem('user_token', res.access_token)
-      if (res.bot_token) localStorage.setItem('bot_token', res.bot_token)
-      ElMessage.success('登录成功')
-      router.push('/')
-    }
+    const res = await userLogin({
+      username: form.value.username,
+      password: form.value.password
+    })
+    localStorage.setItem('user_token', res.access_token)
+    if (res.bot_token) localStorage.setItem('bot_token', res.bot_token)
+    ElMessage.success('登录成功')
+    router.push('/')
   } catch (error) {
     console.error(error)
-    ElMessage.error(error.response?.data?.detail || '操作失败')
+    ElMessage.error(error.response?.data?.detail || '登录失败')
   } finally {
     loading.value = false
   }
-}
-
-const copyToken = () => {
-  navigator.clipboard.writeText(botToken.value)
-  ElMessage.success('Token 已复制到剪贴板')
-}
-
-const handleTokenSaved = () => {
-  showToken.value = false
-  // 注册成功后自动切换到登录
-  isRegister.value = false
-  form.value.password = ''
-  form.value.confirmPassword = ''
-  ElMessage.success('请使用刚才注册的账号登录')
 }
 
 // GitHub 登录
@@ -343,56 +268,14 @@ checkGitHubConfig()
 
 .login-footer {
   margin-top: 24px;
-  display: flex;
-  justify-content: space-between;
+  text-align: center;
   font-size: 12px;
   font-family: monospace;
   
-  .switch-link {
+  .register-hint {
     color: var(--text-secondary);
-    cursor: pointer;
-    text-decoration: none;
-    transition: color 0.2s;
-    
-    &:hover {
-      color: #fff;
-      text-decoration: underline;
-    }
+    margin: 0;
   }
-  
-  .admin-link {
-    color: var(--text-disabled);
-    text-decoration: none;
-    
-    &:hover {
-      color: var(--text-secondary);
-    }
-  }
-}
-
-/* Token 弹窗样式 */
-.token-alert {
-  color: var(--acid-green);
-  font-family: monospace;
-  margin-bottom: 16px;
-  font-size: 12px;
-}
-
-.token-box {
-  background: #000;
-  padding: 16px;
-  border-radius: 8px;
-  border: 1px solid var(--glass-border);
-  color: var(--acid-blue);
-  font-family: monospace;
-  word-break: break-all;
-  margin-bottom: 24px;
-}
-
-.dialog-footer {
-  display: flex;
-  gap: 16px;
-  justify-content: flex-end;
 }
 
 /* OAuth 第三方登录 */

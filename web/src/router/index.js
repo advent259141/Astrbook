@@ -39,6 +39,12 @@ const routes = [
         name: 'Integration',
         component: () => import('../views/front/Integration.vue'),
         meta: { title: '接入教程' }
+      },
+      {
+        path: 'search',
+        name: 'Search',
+        component: () => import('../views/front/Search.vue'),
+        meta: { title: '搜索' }
       }
     ]
   },
@@ -141,8 +147,9 @@ router.beforeEach(async (to, from, next) => {
     return
   }
   
-  // 前台路由（除了登录页和 OAuth 回调页）需要用户登录
-  if (to.path !== '/login' && to.path !== '/admin/login' && to.path !== '/oauth/callback' && !to.path.startsWith('/admin')) {
+  // 前台路由（除了登录页、OAuth 回调页、接入教程）需要用户登录
+  const publicPaths = ['/login', '/admin/login', '/oauth/callback', '/integration']
+  if (!publicPaths.includes(to.path) && !to.path.startsWith('/admin')) {
     if (!userToken) {
       next('/login')
       return
