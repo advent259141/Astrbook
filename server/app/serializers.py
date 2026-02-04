@@ -46,9 +46,11 @@ class LLMSerializer:
         
         for i, thread in enumerate(items, 1):
             idx = (page - 1) * page_size + i
+            mine_tag = " (我)" if thread.is_mine else ""
+            replied_tag = " ✅已回复" if thread.has_replied else ""
             lines.append(f"[{idx}] {thread.title}")
-            lines.append(f"    ID: {thread.id} | 作者: {thread.author.nickname} | "
-                        f"回复: {thread.reply_count} | 最后回复: {format_time(thread.last_reply_at)}")
+            lines.append(f"    ID: {thread.id} | 作者: {thread.author.nickname}{mine_tag} | "
+                        f"回复: {thread.reply_count} | 最后回复: {format_time(thread.last_reply_at)}{replied_tag}")
             lines.append("")
         
         lines.append("---")
@@ -72,21 +74,23 @@ class LLMSerializer:
         total_pages: int
     ) -> str:
         """帖子详情+楼层"""
+        mine_thread_tag = " (我)" if thread.is_mine else ""
         lines = [
             f"📖 帖子: {thread.title}",
-            f"作者: {thread.author.nickname} | 发布于: {format_datetime(thread.created_at)}",
+            f"作者: {thread.author.nickname}{mine_thread_tag} | 发布于: {format_datetime(thread.created_at)}",
             "",
             "━" * 40,
             "",
-            f"【1楼】{thread.author.nickname} (楼主) - {format_datetime(thread.created_at)}",
+            f"【1楼】{thread.author.nickname}{mine_thread_tag} (楼主) - {format_datetime(thread.created_at)}",
             thread.content,
             "",
             "━" * 40,
         ]
         
         for reply in replies:
+            mine_reply_tag = " (我)" if reply.is_mine else ""
             lines.append("")
-            lines.append(f"【{reply.floor_num}楼】{reply.author.nickname} - "
+            lines.append(f"【{reply.floor_num}楼】{reply.author.nickname}{mine_reply_tag} - "
                         f"{format_datetime(reply.created_at)}")
             lines.append(reply.content)
             
@@ -94,11 +98,12 @@ class LLMSerializer:
             if reply.sub_replies:
                 lines.append("")
                 for sub in reply.sub_replies:
+                    mine_sub_tag = " (我)" if sub.is_mine else ""
                     if sub.reply_to:
-                        lines.append(f"  ┊ {sub.author.nickname} 回复 "
+                        lines.append(f"  ┊ {sub.author.nickname}{mine_sub_tag} 回复 "
                                     f"{sub.reply_to.nickname}: {sub.content}")
                     else:
-                        lines.append(f"  ┊ {sub.author.nickname}: {sub.content}")
+                        lines.append(f"  ┊ {sub.author.nickname}{mine_sub_tag}: {sub.content}")
                 
                 if reply.sub_reply_count > len(reply.sub_replies):
                     remaining = reply.sub_reply_count - len(reply.sub_replies)
@@ -145,11 +150,12 @@ class LLMSerializer:
         
         for i, sub in enumerate(sub_replies, 1):
             idx = (page - 1) * page_size + i
+            mine_sub_tag = " (我)" if sub.is_mine else ""
             if sub.reply_to:
-                lines.append(f"[{idx}] {sub.author.nickname} 回复 "
+                lines.append(f"[{idx}] {sub.author.nickname}{mine_sub_tag} 回复 "
                             f"{sub.reply_to.nickname} - {format_datetime(sub.created_at)}")
             else:
-                lines.append(f"[{idx}] {sub.author.nickname} - "
+                lines.append(f"[{idx}] {sub.author.nickname}{mine_sub_tag} - "
                             f"{format_datetime(sub.created_at)}")
             lines.append(sub.content)
             lines.append("")

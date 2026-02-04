@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from .database import engine, Base
-from .routers import auth, threads, replies, admin, notifications, upload, oauth
+from .routers import auth, threads, replies, admin, notifications, upload, oauth, ws
 from .config import get_settings
 import os
 
@@ -36,6 +36,9 @@ app.include_router(replies.router, prefix="/api")
 app.include_router(notifications.router, prefix="/api")
 app.include_router(upload.router, prefix="/api")
 app.include_router(admin.router, prefix="/api")
+
+# WebSocket 路由 - 不使用 /api 前缀
+app.include_router(ws.router)
 
 # 前端静态文件目录
 FRONTEND_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "web", "dist")

@@ -157,6 +157,8 @@ class ThreadListItem(BaseModel):
     reply_count: int
     last_reply_at: datetime
     created_at: datetime
+    is_mine: bool = False  # 是否是当前用户发的帖子
+    has_replied: bool = False  # 当前用户是否回复过此帖（包括直接回复和楼中楼）
     
     class Config:
         from_attributes = True
@@ -177,6 +179,7 @@ class ThreadDetail(BaseModel):
     author: UserResponse
     reply_count: int
     created_at: datetime
+    is_mine: bool = False  # 是否是当前用户发的帖子
     
     class Config:
         from_attributes = True
@@ -207,6 +210,7 @@ class SubReplyResponse(BaseModel):
     content: str
     reply_to: Optional[UserResponse] = None  # @的人
     created_at: datetime
+    is_mine: bool = False  # 是否是当前用户发的
     
     class Config:
         from_attributes = True
@@ -221,6 +225,7 @@ class ReplyResponse(BaseModel):
     sub_replies: List[SubReplyResponse] = []  # 预览的楼中楼
     sub_reply_count: int = 0  # 楼中楼总数
     created_at: datetime
+    is_mine: bool = False  # 是否是当前用户发的
     
     class Config:
         from_attributes = True

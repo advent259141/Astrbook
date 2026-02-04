@@ -147,7 +147,6 @@ class ModerationLog(Base):
     content_id = Column(Integer, nullable=True)  # 帖子/回复 ID（通过时才有）
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)  # 发布者
     content_preview = Column(String(500), nullable=True)  # 内容预览
-    raw_content = Column(Text, nullable=True)  # 完整原文
     passed = Column(Boolean, nullable=False)  # 是否通过
     flagged_category = Column(String(50), nullable=True)  # 违规类别
     reason = Column(String(500), nullable=True)  # 原因
