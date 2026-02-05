@@ -14,17 +14,100 @@ const props = defineProps({
   }
 })
 
+// 视频文件扩展名
+const VIDEO_EXTENSIONS = ['.mp4', '.webm', '.ogg', '.mov', '.m4v']
+
+// 检查URL是否为视频
+const isVideoUrl = (url) => {
+  if (!url) return false
+  const lowerUrl = url.toLowerCase().split('?')[0] // 移除查询参数后检查
+  return VIDEO_EXTENSIONS.some(ext => lowerUrl.endsWith(ext))
+}
+
+// 解析 Bilibili 链接，返回 { bvid, page } 或 null
+const parseBilibiliUrl = (url) => {
+  if (!url) return null
+  
+  // 匹配 BV 号：BV1xx411c7mD 格式
+  // 支持格式：
+  // - https://www.bilibili.com/video/BV1xx411c7mD
+  // - https://www.bilibili.com/video/BV1xx411c7mD?p=2
+  // - https://b23.tv/BV1xx411c7mD
+  // - bilibili:BV1xx411c7mD
+  // - 纯 BV 号：BV1xx411c7mD
+  
+  const bvPattern = /(?:bilibili\.com\/video\/|b23\.tv\/|bilibili:|^)(BV[a-zA-Z0-9]+)/i
+  const match = url.match(bvPattern)
+  
+  if (match) {
+    const bvid = match[1]
+    // 提取分P参数
+    const pageMatch = url.match(/[?&]p=(\d+)/)
+    const page = pageMatch ? parseInt(pageMatch[1]) : 1
+    return { bvid, page }
+  }
+  
+  return null
+}
+
+// 自定义 renderer，将视频链接转换为 video 标签
+const renderer = new marked.Renderer()
+const originalImageRenderer = renderer.image.bind(renderer)
+
+renderer.image = function(href, title, text) {
+  // 兼容 marked 不同版本的参数格式
+  const url = typeof href === 'object' ? href.href : href
+  const alt = typeof href === 'object' ? href.text : text
+  
+  // 检查是否为 Bilibili 视频
+  const biliInfo = parseBilibiliUrl(url)
+  if (biliInfo) {
+    const { bvid, page } = biliInfo
+    return `<div class="bilibili-video-wrapper">
+      <iframe 
+        src="https://player.bilibili.com/player.html?bvid=${bvid}&page=${page}&high_quality=1&danmaku=0&autoplay=0"
+        scrolling="no"
+        frameborder="0"
+        allowfullscreen="true"
+        class="bilibili-iframe"
+        title="${alt || 'Bilibili 视频'}"
+      ></iframe>
+    </div>`
+  }
+  
+  if (isVideoUrl(url)) {
+    // 视频：渲染为 video 标签
+    const titleAttr = title ? ` title="${title}"` : ''
+    return `<video controls preload="metadata" class="markdown-video"${titleAttr}>
+      <source src="${url}" type="video/${url.split('.').pop().toLowerCase()}">
+      ${alt || '您的浏览器不支持视频播放'}
+    </video>`
+  }
+  // 图片：使用原始渲染
+  return originalImageRenderer(href, title, text)
+}
+
 // 配置 marked
 marked.setOptions({
   breaks: true,  // 支持换行
-  gfm: true      // 支持 GitHub Flavored Markdown
+  gfm: true,     // 支持 GitHub Flavored Markdown
+  renderer: renderer
 })
+
+// 配置 DOMPurify 允许 video 和 iframe 相关标签
+const sanitizeConfig = {
+  ADD_TAGS: ['video', 'source', 'iframe'],
+  ADD_ATTR: [
+    'controls', 'preload', 'src', 'type', 'autoplay', 'loop', 'muted', 'playsinline',
+    'scrolling', 'frameborder', 'allowfullscreen', 'title', 'allow'
+  ]
+}
 
 // 渲染并净化 HTML
 const renderedContent = computed(() => {
   if (!props.content) return ''
   const html = marked.parse(props.content)
-  return DOMPurify.sanitize(html)
+  return DOMPurify.sanitize(html, sanitizeConfig)
 })
 </script>
 
@@ -123,6 +206,64 @@ const renderedContent = computed(() => {
   @media (max-width: 768px) {
     img {
       max-height: 400px;
+      border-radius: 8px;
+    }
+  }
+  
+  // 视频样式
+  video, .markdown-video {
+    max-width: 100%;
+    max-height: 500px;
+    border-radius: 12px;
+    margin: 16px 0;
+    display: block;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: #000;
+    
+    &:hover {
+      box-shadow: 0 8px 30px rgba(176, 38, 255, 0.3);
+    }
+  }
+  
+  // 移动端视频适配
+  @media (max-width: 768px) {
+    video, .markdown-video {
+      max-height: 300px;
+      border-radius: 8px;
+    }
+  }
+  
+  // Bilibili 视频嵌入样式
+  .bilibili-video-wrapper {
+    position: relative;
+    width: 100%;
+    max-width: 800px;
+    padding-bottom: 56.25%; // 16:9 比例
+    margin: 16px 0;
+    border-radius: 12px;
+    overflow: hidden;
+    background: #000;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    
+    &:hover {
+      box-shadow: 0 8px 30px rgba(176, 38, 255, 0.3);
+    }
+    
+    .bilibili-iframe {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      border: none;
+    }
+  }
+  
+  // 移动端 Bilibili 适配
+  @media (max-width: 768px) {
+    .bilibili-video-wrapper {
       border-radius: 8px;
     }
   }
