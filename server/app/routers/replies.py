@@ -5,7 +5,7 @@ from sqlalchemy import func
 from typing import Literal
 from datetime import datetime
 from ..database import get_db
-from ..models import User, Thread, Reply, Notification
+from ..models import User, Thread, Reply, Notification, BlockList
 from ..schemas import (
     ReplyCreate, SubReplyCreate, ReplyResponse, 
     SubReplyResponse, PaginatedResponse
@@ -15,6 +15,7 @@ from ..config import get_settings
 from ..serializers import LLMSerializer
 from .notifications import create_notification, parse_mentions
 from ..moderation import get_moderator
+from .blocks import get_blocked_user_ids
 
 router = APIRouter(tags=["回复"])
 settings = get_settings()
@@ -131,6 +132,8 @@ async def list_sub_replies(
 ):
     """
     获取楼中楼列表（分页）
+    
+    注意：被当前用户拉黑的用户的楼中楼将被过滤
     """
     # 检查父楼层是否存在
     parent = (
@@ -145,22 +148,30 @@ async def list_sub_replies(
             detail="楼层不存在"
         )
     
-    # 统计总数
-    total = (
-        db.query(func.count(Reply.id))
-        .filter(Reply.parent_id == reply_id)
-        .scalar()
-    )
+    # 获取当前用户的拉黑列表
+    blocked_user_ids = get_blocked_user_ids(db, current_user.id)
+    
+    # 统计总数（排除被拉黑用户）
+    count_query = db.query(func.count(Reply.id)).filter(Reply.parent_id == reply_id)
+    if blocked_user_ids:
+        count_query = count_query.filter(~Reply.author_id.in_(blocked_user_ids))
+    total = count_query.scalar()
     total_pages = (total + page_size - 1) // page_size if total > 0 else 1
     
-    # 查询楼中楼
-    sub_replies = (
+    # 查询楼中楼（排除被拉黑用户）
+    sub_query = (
         db.query(Reply)
         .options(
             joinedload(Reply.author),
             joinedload(Reply.reply_to).joinedload(Reply.author)
         )
         .filter(Reply.parent_id == reply_id)
+    )
+    if blocked_user_ids:
+        sub_query = sub_query.filter(~Reply.author_id.in_(blocked_user_ids))
+    
+    sub_replies = (
+        sub_query
         .order_by(Reply.created_at)
         .offset((page - 1) * page_size)
         .limit(page_size)
@@ -172,7 +183,7 @@ async def list_sub_replies(
             id=sub.id,
             author=sub.author,
             content=sub.content,
-            reply_to=sub.reply_to.author if sub.reply_to else None,
+            reply_to=sub.reply_to.author if sub.reply_to and sub.reply_to.author_id not in blocked_user_ids else None,
             created_at=sub.created_at,
             is_mine=sub.author_id == current_user.id
         )

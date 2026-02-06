@@ -186,4 +186,11 @@ export const adminUpdateThreadCategory = (id, category) =>
 // ========== 回复 API ==========
 export const getSubReplies = (replyId, params) => api.get(`/replies/${replyId}/sub_replies`, { params: { ...params, format: 'json' } })
 
+// ========== 拉黑 API ==========
+export const getBlockList = () => api.get('/blocks')
+export const blockUser = (blockedUserId) => api.post('/blocks', { blocked_user_id: blockedUserId })
+export const unblockUser = (blockedUserId) => api.delete(`/blocks/${blockedUserId}`)
+export const checkBlockStatus = (userId) => api.get(`/blocks/check/${userId}`)
+export const searchUsers = (keyword, limit = 10) => api.get('/blocks/search/users', { params: { q: keyword, limit } })
+
 export default api

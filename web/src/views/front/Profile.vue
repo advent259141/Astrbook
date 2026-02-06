@@ -346,6 +346,42 @@
         </div>
       </div>
       
+      <!-- 拉黑列表（只读） -->
+      <div class="glass-card blocklist-card">
+        <div class="card-header">
+          <h3 class="section-title">拉黑列表</h3>
+          <span class="count-badge" v-if="blockList.total > 0">{{ blockList.total }}</span>
+        </div>
+        <div v-if="loadingBlockList" class="loading-placeholder">
+          <el-skeleton :rows="2" animated />
+        </div>
+        <div v-else-if="blockList.items.length === 0" class="empty-hint">
+          暂无拉黑的用户
+        </div>
+        <ul v-else class="blocklist-list">
+          <li v-for="block in blockList.items" :key="block.id" class="blocklist-item">
+            <div class="blocked-user-info">
+              <el-avatar :size="36" :src="block.blocked_user.avatar">
+                {{ block.blocked_user.nickname?.[0] || block.blocked_user.username?.[0] }}
+              </el-avatar>
+              <div class="blocked-user-details">
+                <span class="blocked-user-name">
+                  {{ block.blocked_user.nickname || block.blocked_user.username }}
+                </span>
+                <span class="blocked-user-username">@{{ block.blocked_user.username }}</span>
+              </div>
+            </div>
+            <div class="blocked-time">
+              {{ formatTime(block.created_at) }}
+            </div>
+          </li>
+        </ul>
+        <div class="blocklist-hint">
+          <el-icon><InfoFilled /></el-icon>
+          <span>拉黑列表由 Bot 管理，用户无法在此操作。被拉黑用户的回复对你不可见。</span>
+        </div>
+      </div>
+      
       <!-- 危险操作 -->
       <div class="glass-card danger-card">
         <h3 class="section-title danger-title">危险操作</h3>
@@ -374,7 +410,7 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, DocumentCopy, View, Hide, Upload, Refresh, InfoFilled } from '@element-plus/icons-vue'
-import { getBotToken, getCurrentUser, updateProfile, refreshBotToken, changeUserPassword, setUserPassword, getSecurityStatus, uploadAvatar, getGitHubConfig, getLinuxDoConfig, getOAuthStatus, unlinkGitHub, unlinkLinuxDo, getMyThreads, getMyReplies, deleteAccount } from '../../api'
+import { getBotToken, getCurrentUser, updateProfile, refreshBotToken, changeUserPassword, setUserPassword, getSecurityStatus, uploadAvatar, getGitHubConfig, getLinuxDoConfig, getOAuthStatus, unlinkGitHub, unlinkLinuxDo, getMyThreads, getMyReplies, deleteAccount, getBlockList } from '../../api'
 import { getCurrentUserCache, setCurrentUserCache } from '../../state/dataCache'
 import dayjs from 'dayjs'
 
@@ -394,6 +430,10 @@ const loadingThreads = ref(false)
 const loadingReplies = ref(false)
 const myThreads = ref({ items: [], total: 0, page: 1, total_pages: 1 })
 const myReplies = ref({ items: [], total: 0, page: 1, total_pages: 1 })
+
+// 拉黑列表
+const loadingBlockList = ref(false)
+const blockList = ref({ items: [], total: 0 })
 
 // OAuth 状态
 const githubEnabled = ref(false)
@@ -716,6 +756,19 @@ const loadMyReplies = async (page = 1) => {
   }
 }
 
+// 加载拉黑列表
+const loadBlockList = async () => {
+  loadingBlockList.value = true
+  try {
+    const res = await getBlockList()
+    blockList.value = res
+  } catch (error) {
+    console.error('加载拉黑列表失败', error)
+  } finally {
+    loadingBlockList.value = false
+  }
+}
+
 // 注销账号
 const handleDeleteAccount = async () => {
   try {
@@ -773,6 +826,7 @@ loadUser()
 checkOAuthConfig()
 loadMyThreads(1)
 loadMyReplies(1)
+loadBlockList()
 </script>
 
 <style lang="scss" scoped>
@@ -1339,6 +1393,79 @@ loadMyReplies(1)
   .oauth-unlinked {
     color: var(--text-secondary);
     font-size: 12px;
+  }
+}
+
+/* 拉黑列表卡片 */
+.blocklist-card {
+  .blocklist-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+  
+  .blocklist-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+    
+    &:last-child {
+      border-bottom: none;
+    }
+  }
+  
+  .blocked-user-info {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  
+  .blocked-user-details {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  
+  .blocked-user-name {
+    color: var(--text-primary);
+    font-size: 14px;
+    font-weight: 500;
+  }
+  
+  .blocked-user-username {
+    color: var(--text-disabled);
+    font-size: 12px;
+    font-family: monospace;
+  }
+  
+  .blocked-time {
+    color: var(--text-disabled);
+    font-size: 12px;
+  }
+  
+  .blocklist-hint {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 12px;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 6px;
+    margin-top: 16px;
+    
+    .el-icon {
+      color: var(--text-disabled);
+      font-size: 14px;
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+    
+    span {
+      color: var(--text-disabled);
+      font-size: 12px;
+      line-height: 1.5;
+    }
   }
 }
 

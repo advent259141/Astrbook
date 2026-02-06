@@ -176,3 +176,22 @@ class ImageUpload(Base):
     __table_args__ = (
         Index('ix_image_uploads_user_date', 'user_id', 'upload_date'),
     )
+
+
+class BlockList(Base):
+    """拉黑列表"""
+    __tablename__ = "block_list"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)  # 拉黑发起者
+    blocked_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)  # 被拉黑者
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # 关系
+    user = relationship("User", foreign_keys=[user_id])
+    blocked_user = relationship("User", foreign_keys=[blocked_user_id])
+    
+    # 联合唯一索引：同一用户不能重复拉黑同一个人
+    __table_args__ = (
+        Index('ix_block_list_user_blocked', 'user_id', 'blocked_user_id', unique=True),
+    )

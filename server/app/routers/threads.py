@@ -5,7 +5,7 @@ from sqlalchemy import func
 from typing import Literal, Optional
 from datetime import datetime, timedelta
 from ..database import get_db
-from ..models import User, Thread, Reply, Notification
+from ..models import User, Thread, Reply, Notification, BlockList
 from ..schemas import (
     ThreadCreate, ThreadListItem, ThreadDetail,
     ReplyResponse, SubReplyResponse, PaginatedResponse, ThreadWithReplies,
@@ -16,6 +16,7 @@ from ..config import get_settings
 from ..serializers import LLMSerializer
 from ..moderation import get_moderator
 from ..websocket import push_new_thread
+from .blocks import get_blocked_user_ids
 
 router = APIRouter(prefix="/threads", tags=["帖子"])
 settings = get_settings()
@@ -152,10 +153,17 @@ async def search_threads(
     }
 
 
-def get_reply_response(reply: Reply, preview_count: int = 3, current_user_id: Optional[int] = None) -> ReplyResponse:
-    """构建楼层响应，包含楼中楼预览"""
-    sub_replies = reply.sub_replies[:preview_count] if reply.sub_replies else []
-    sub_reply_count = len(reply.sub_replies) if reply.sub_replies else 0
+def get_reply_response(reply: Reply, preview_count: int = 3, current_user_id: Optional[int] = None, blocked_user_ids: set = None) -> ReplyResponse:
+    """构建楼层响应，包含楼中楼预览，过滤被拉黑用户的楼中楼"""
+    if blocked_user_ids is None:
+        blocked_user_ids = set()
+    
+    # 过滤被拉黑用户的楼中楼
+    all_sub_replies = reply.sub_replies if reply.sub_replies else []
+    filtered_sub_replies = [sub for sub in all_sub_replies if sub.author_id not in blocked_user_ids]
+    
+    sub_replies = filtered_sub_replies[:preview_count]
+    sub_reply_count = len(filtered_sub_replies)
     
     return ReplyResponse(
         id=reply.id,
@@ -167,7 +175,7 @@ def get_reply_response(reply: Reply, preview_count: int = 3, current_user_id: Op
                 id=sub.id,
                 author=sub.author,
                 content=sub.content,
-                reply_to=sub.reply_to.author if sub.reply_to else None,
+                reply_to=sub.reply_to.author if sub.reply_to and sub.reply_to.author_id not in blocked_user_ids else None,
                 created_at=sub.created_at,
                 is_mine=current_user_id is not None and sub.author_id == current_user_id
             )
@@ -319,6 +327,8 @@ async def get_thread(
     - **page**: 楼层页码
     - **page_size**: 每页楼层数，默认20
     - **format**: 返回格式，text(给LLM) 或 json
+    
+    注意：如果用户已登录，被该用户拉黑的用户的回复将被过滤
     """
     # 查询帖子
     thread = (
@@ -334,16 +344,23 @@ async def get_thread(
             detail="帖子不存在"
         )
     
-    # 统计主楼层总数
-    total = (
-        db.query(func.count(Reply.id))
-        .filter(Reply.thread_id == thread_id, Reply.parent_id.is_(None))
-        .scalar()
+    # 获取当前用户的拉黑列表
+    blocked_user_ids = set()
+    if current_user:
+        blocked_user_ids = get_blocked_user_ids(db, current_user.id)
+    
+    # 统计主楼层总数（排除被拉黑用户的回复）
+    count_query = db.query(func.count(Reply.id)).filter(
+        Reply.thread_id == thread_id, 
+        Reply.parent_id.is_(None)
     )
+    if blocked_user_ids:
+        count_query = count_query.filter(~Reply.author_id.in_(blocked_user_ids))
+    total = count_query.scalar()
     total_pages = (total + page_size - 1) // page_size if total > 0 else 1
     
-    # 查询主楼层（分页）
-    replies = (
+    # 查询主楼层（分页，排除被拉黑用户）
+    replies_query = (
         db.query(Reply)
         .options(
             joinedload(Reply.author),
@@ -351,6 +368,12 @@ async def get_thread(
             joinedload(Reply.sub_replies).joinedload(Reply.reply_to).joinedload(Reply.author)
         )
         .filter(Reply.thread_id == thread_id, Reply.parent_id.is_(None))
+    )
+    if blocked_user_ids:
+        replies_query = replies_query.filter(~Reply.author_id.in_(blocked_user_ids))
+    
+    replies = (
+        replies_query
         .order_by(Reply.floor_num)
         .offset((page - 1) * page_size)
         .limit(page_size)
@@ -358,7 +381,7 @@ async def get_thread(
     )
     
     reply_items = [
-        get_reply_response(r, settings.SUB_REPLY_PREVIEW_COUNT, current_user.id if current_user else None) 
+        get_reply_response(r, settings.SUB_REPLY_PREVIEW_COUNT, current_user.id if current_user else None, blocked_user_ids) 
         for r in replies
     ]
     

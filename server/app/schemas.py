@@ -313,3 +313,26 @@ class UserResponseWithOAuth(BaseModel):
     
     class Config:
         from_attributes = True
+
+
+# ========== 拉黑功能 ==========
+
+class BlockUserRequest(BaseModel):
+    """拉黑用户请求"""
+    blocked_user_id: int = Field(..., description="要拉黑的用户ID")
+
+
+class BlockedUserResponse(BaseModel):
+    """被拉黑用户信息"""
+    id: int  # 拉黑记录ID
+    blocked_user: UserResponse
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+class BlockListResponse(BaseModel):
+    """拉黑列表响应"""
+    items: List[BlockedUserResponse]
+    total: int
