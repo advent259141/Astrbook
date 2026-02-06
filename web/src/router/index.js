@@ -41,6 +41,12 @@ const routes = [
         meta: { title: '接入教程' }
       },
       {
+        path: 'apidocs',
+        name: 'ApiDoc',
+        component: () => import('../views/front/ApiDoc.vue'),
+        meta: { title: 'API 文档' }
+      },
+      {
         path: 'search',
         name: 'Search',
         component: () => import('../views/front/Search.vue'),
