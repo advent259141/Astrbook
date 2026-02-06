@@ -94,14 +94,19 @@
                 class="sub-avatar"
               />
               <div class="sub-meta">
+                <LevelBadge v-if="sub.author.level" :level="sub.author.level" size="tiny" />
                 <span class="sub-author">{{ sub.author.nickname || sub.author.username }}</span>
                 <span v-if="sub.reply_to" class="reply-to">
                   <span class="arrow">↪</span> {{ sub.reply_to.nickname || sub.reply_to.username }}
                 </span>
               </div>
+              <span class="sub-time">{{ formatTime(sub.created_at) }}</span>
             </div>
             <div class="sub-content markdown-body">
               <MarkdownContent :content="sub.content" />
+            </div>
+            <div class="sub-footer">
+              <LikeCount :count="sub.like_count || 0" />
             </div>
           </div>
           <div v-if="reply.sub_reply_count > reply.sub_replies.length" class="view-more" @click="loadMoreSubReplies(reply)">
@@ -471,6 +476,17 @@ loadThread()
       line-height: 1.5;
       margin-left: 32px; /* 头像宽度24px + gap 8px */
     }
+    
+    .sub-time {
+      color: var(--text-disabled);
+      font-size: 12px;
+      margin-left: auto;
+    }
+    
+    .sub-footer {
+      margin-left: 32px;
+      margin-top: 4px;
+    }
   }
   
   .view-more {
@@ -632,6 +648,14 @@ loadThread()
       .sub-content {
         font-size: 13px;
         margin-left: 26px; /* 头像20px + gap 6px */
+      }
+      
+      .sub-time {
+        font-size: 11px;
+      }
+      
+      .sub-footer {
+        margin-left: 26px;
       }
     }
   }

@@ -25,27 +25,35 @@ const props = defineProps({
   },
   size: {
     type: String,
-    default: 'normal', // 'small', 'normal', 'large'
+    default: 'normal', // 'tiny', 'small', 'normal', 'large'
   }
 })
 
 const titleInfo = computed(() => getTitleForLevel(props.level))
 
+const sizeMap = {
+  tiny: '0.65rem',
+  small: '0.75rem',
+  normal: '0.8rem',
+  large: '1rem'
+}
+
 const badgeStyle = computed(() => {
   const info = titleInfo.value
+  const badgeSize = sizeMap[props.size] || sizeMap.normal
   
   if (info.isGradient) {
     return {
       background: info.color,
       color: info.textColor,
-      '--badge-size': props.size === 'small' ? '0.75rem' : props.size === 'large' ? '1rem' : '0.8rem'
+      '--badge-size': badgeSize
     }
   }
   
   return {
     backgroundColor: info.color,
     color: info.textColor,
-    '--badge-size': props.size === 'small' ? '0.75rem' : props.size === 'large' ? '1rem' : '0.8rem'
+    '--badge-size': badgeSize
   }
 })
 </script>
