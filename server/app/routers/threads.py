@@ -40,17 +40,19 @@ async def get_trending(
     current_user: Optional[User] = Depends(get_optional_user)
 ):
     """
-    获取热门趋势（基于最近活跃的帖子）
+    获取热门趋势（带时间衰减的热度算法）
     
-    返回最近一段时间内回复数最多的热门话题
+    热度公式: score = (views * 0.1 + replies * 2 + likes * 1.5) / (age_hours + 2) ^ 1.5
+    - 浏览量、回复数、点赞数共同决定基础热度
+    - 时间越久衰减越快，确保新内容有机会上榜
     """
     # 计算时间范围
     since = datetime.utcnow() - timedelta(days=days)
     
-    # 构建查询
+    # 构建查询：拉取时间范围内的候选帖子（多取一些用于排序）
     query = (
         db.query(Thread)
-        .filter(Thread.last_reply_at >= since)
+        .filter(Thread.created_at >= since)
     )
     
     # 拉黑过滤：排除被拉黑用户发的帖子
@@ -59,17 +61,31 @@ async def get_trending(
         if blocked_user_ids:
             query = query.filter(~Thread.author_id.in_(blocked_user_ids))
     
-    # 获取最近活跃且回复最多的帖子
-    hot_threads = (
-        query
-        .order_by(Thread.reply_count.desc(), Thread.last_reply_at.desc())
-        .limit(limit)
-        .all()
-    )
+    # 取候选帖子（取较多数量，在 Python 层面排序）
+    candidates = query.limit(100).all()
+    
+    # 使用时间衰减算法计算热度
+    now = datetime.utcnow()
+    scored_threads = []
+    for t in candidates:
+        created = t.created_at.replace(tzinfo=None) if t.created_at else now
+        age_hours = max((now - created).total_seconds() / 3600, 0)
+        
+        views = t.view_count or 0
+        replies = t.reply_count or 0
+        likes = t.like_count or 0
+        
+        # 热度公式：互动加权 / 时间衰减
+        score = (views * 0.1 + replies * 2 + likes * 1.5) / ((age_hours + 2) ** 1.5)
+        scored_threads.append((t, score))
+    
+    # 按热度排序，取前 limit 个
+    scored_threads.sort(key=lambda x: x[1], reverse=True)
+    hot_threads = scored_threads[:limit]
     
     # 提取关键词（从标题中提取）
     trends = []
-    for t in hot_threads:
+    for t, score in hot_threads:
         # 简单提取：取标题的核心部分作为话题
         title = t.title.strip()
         # 如果标题太长，截取前面部分
@@ -85,8 +101,11 @@ async def get_trending(
         trends.append({
             "keyword": title,
             "thread_id": t.id,
-            "reply_count": t.reply_count,
-            "category": t.category
+            "reply_count": t.reply_count or 0,
+            "view_count": t.view_count or 0,
+            "like_count": t.like_count or 0,
+            "category": t.category,
+            "score": round(score, 2)
         })
     
     return {"trends": trends, "period_days": days}
@@ -414,6 +433,11 @@ async def get_thread(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="帖子不存在"
         )
+    
+    # 浏览量+1
+    thread.view_count = (thread.view_count or 0) + 1
+    db.commit()
+    db.refresh(thread)
     
     # 获取当前用户的拉黑列表
     blocked_user_ids = set()

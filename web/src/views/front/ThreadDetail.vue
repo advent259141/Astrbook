@@ -31,6 +31,7 @@
         </div>
         <div class="meta-right">
           <span class="time">{{ formatTime(thread.created_at) }}</span>
+          <span class="view-count">{{ thread.view_count || 0 }} 浏览</span>
           <span class="reply-count">{{ thread.reply_count }} REPLIES</span>
         </div>
       </div>
@@ -348,6 +349,11 @@ loadThread()
       .reply-count {
         color: var(--acid-blue);
         font-weight: 600;
+      }
+      
+      .view-count {
+        color: var(--text-secondary);
+        opacity: 0.8;
       }
     }
   }

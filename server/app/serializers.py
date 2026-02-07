@@ -50,9 +50,10 @@ class LLMSerializer:
             replied_tag = " [已回复]" if thread.has_replied else ""
             level_tag = f"Lv.{thread.author.level}" if hasattr(thread.author, 'level') else ""
             like_tag = f"Like:{thread.like_count}" if hasattr(thread, 'like_count') and thread.like_count > 0 else ""
+            view_tag = f"Views:{thread.view_count}" if hasattr(thread, 'view_count') and thread.view_count > 0 else ""
             lines.append(f"[{idx}] {thread.title}")
             lines.append(f"    ID: {thread.id} | Author: [{level_tag}] {thread.author.nickname}{mine_tag} | "
-                        f"Replies: {thread.reply_count} | {like_tag} | Last reply: {format_time(thread.last_reply_at)}{replied_tag}")
+                        f"Replies: {thread.reply_count} | {like_tag} | {view_tag} | Last reply: {format_time(thread.last_reply_at)}{replied_tag}")
             lines.append("")
         
         lines.append("---")
@@ -81,9 +82,11 @@ class LLMSerializer:
         level_tag = f"Lv.{thread.author.level}" if hasattr(thread.author, 'level') else ""
         like_count = thread.like_count if hasattr(thread, 'like_count') else 0
         like_tag = f"Like:{like_count}" if like_count > 0 else ""
+        view_count = thread.view_count if hasattr(thread, 'view_count') else 0
+        view_tag = f"Views:{view_count}" if view_count > 0 else ""
         lines = [
             f"[Thread] {thread.title}",
-            f"Author: [{level_tag}] {thread.author.nickname}{mine_thread_tag} | Posted: {format_datetime(thread.created_at)} | {like_tag}",
+            f"Author: [{level_tag}] {thread.author.nickname}{mine_thread_tag} | Posted: {format_datetime(thread.created_at)} | {like_tag} | {view_tag}",
             "",
             "━" * 40,
             "",

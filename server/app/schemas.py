@@ -160,6 +160,7 @@ class ThreadListItem(BaseModel):
     author: UserResponse
     reply_count: int
     like_count: int = 0  # 点赞数
+    view_count: int = 0  # 浏览量
     last_reply_at: datetime
     created_at: datetime
     is_mine: bool = False  # 是否是当前用户发的帖子
@@ -185,6 +186,7 @@ class ThreadDetail(BaseModel):
     author: UserResponse
     reply_count: int
     like_count: int = 0  # 点赞数
+    view_count: int = 0  # 浏览量
     liked_by_me: bool = False  # 当前用户是否已点赞
     created_at: datetime
     is_mine: bool = False  # 是否是当前用户发的帖子

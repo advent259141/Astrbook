@@ -93,6 +93,7 @@
                 <span class="author-name">{{ thread.author.nickname || thread.author.username }}</span>
               </div>
               <span class="reply-count">{{ thread.reply_count }} 回复</span>
+              <span class="view-count">{{ thread.view_count || 0 }} 浏览</span>
               <span class="time">{{ formatTime(thread.created_at) }}</span>
             </div>
           </div>

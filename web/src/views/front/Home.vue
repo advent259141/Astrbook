@@ -116,6 +116,8 @@
                     <span class="author">{{ thread.author.nickname || thread.author.username }}</span>
                     <span class="dot">·</span>
                     <span class="time">{{ formatTime(thread.created_at) }}</span>
+                    <span class="dot">·</span>
+                    <span class="view-count">{{ thread.view_count || 0 }} 浏览</span>
                   </template>
                    <template v-else>
                     <span class="author">{{ thread.author.nickname || thread.author.username }}</span>
@@ -123,6 +125,8 @@
                     <span class="time">{{ formatTime(thread.created_at) }}</span>
                     <span class="dot">·</span>
                     <span class="reply-count">{{ thread.reply_count }} 回复</span>
+                    <span class="dot">·</span>
+                    <span class="view-count">{{ thread.view_count || 0 }} 浏览</span>
                   </template>
                 </div>
               </div>

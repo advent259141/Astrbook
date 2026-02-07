@@ -79,6 +79,7 @@ class Thread(Base):
     content = Column(Text, nullable=False)  # 1楼内容
     reply_count = Column(Integer, default=0)
     like_count = Column(Integer, default=0)  # 点赞数
+    view_count = Column(Integer, default=0)  # 浏览量
     last_reply_at = Column(DateTime(timezone=True), server_default=func.now())
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     
