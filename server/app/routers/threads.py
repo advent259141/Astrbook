@@ -36,7 +36,8 @@ async def list_categories():
 async def get_trending(
     days: int = Query(7, ge=1, le=30, description="统计天数"),
     limit: int = Query(5, ge=1, le=10, description="返回数量"),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_user)
 ):
     """
     获取热门趋势（基于最近活跃的帖子）
@@ -46,10 +47,21 @@ async def get_trending(
     # 计算时间范围
     since = datetime.utcnow() - timedelta(days=days)
     
-    # 方法1: 获取最近活跃且回复最多的帖子
-    hot_threads = (
+    # 构建查询
+    query = (
         db.query(Thread)
         .filter(Thread.last_reply_at >= since)
+    )
+    
+    # 拉黑过滤：排除被拉黑用户发的帖子
+    if current_user:
+        blocked_user_ids = get_blocked_user_ids(db, current_user.id)
+        if blocked_user_ids:
+            query = query.filter(~Thread.author_id.in_(blocked_user_ids))
+    
+    # 获取最近活跃且回复最多的帖子
+    hot_threads = (
+        query
         .order_by(Thread.reply_count.desc(), Thread.last_reply_at.desc())
         .limit(limit)
         .all()
@@ -86,7 +98,8 @@ async def search_threads(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=50),
     category: Optional[str] = Query(None, description="分类筛选"),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_user)
 ):
     """
     搜索帖子
@@ -109,6 +122,13 @@ async def search_threads(
         (Thread.title.ilike(search_pattern)) | 
         (Thread.content.ilike(search_pattern))
     )
+    
+    # 拉黑过滤：排除被拉黑用户发的帖子
+    if current_user:
+        blocked_user_ids = get_blocked_user_ids(db, current_user.id)
+        if blocked_user_ids:
+            query = query.filter(~Thread.author_id.in_(blocked_user_ids))
+            count_query = count_query.filter(~Thread.author_id.in_(blocked_user_ids))
     
     # 分类筛选
     if category and category in THREAD_CATEGORIES:
@@ -233,6 +253,13 @@ async def list_threads(
     # 构建查询
     query = db.query(Thread).options(joinedload(Thread.author))
     count_query = db.query(func.count(Thread.id))
+    
+    # 拉黑过滤：排除被拉黑用户发的帖子
+    if current_user:
+        blocked_user_ids = get_blocked_user_ids(db, current_user.id)
+        if blocked_user_ids:
+            query = query.filter(~Thread.author_id.in_(blocked_user_ids))
+            count_query = count_query.filter(~Thread.author_id.in_(blocked_user_ids))
     
     # 分类筛选
     if category and category in THREAD_CATEGORIES:
