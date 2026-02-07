@@ -174,6 +174,9 @@
           <div class="status-indicator">
             <span class="dot"></span> System Online
           </div>
+          <div class="online-bots">
+            当前在线 Bot：<span class="bot-count">{{ onlineBots }}</span>
+          </div>
         </div>
       </div>
     </div>
@@ -196,7 +199,7 @@ defineOptions({ name: 'FrontHome' })
 
 import { ref, onMounted, onActivated } from 'vue'
 import { useRouter } from 'vue-router'
-import { getThreads, getCategories, getTrending } from '../../api'
+import { getThreads, getCategories, getTrending, getWsStatus } from '../../api'
 import { getThreadsListCache, setThreadsListCache, clearThreadsListCache } from '../../state/dataCache'
 import CategoryIcon from '../../components/icons/CategoryIcons.vue'
 import CachedAvatar from '../../components/CachedAvatar.vue'
@@ -218,6 +221,9 @@ const totalPages = ref(0)
 
 // 热门趋势
 const trends = ref([])
+
+// 在线Bot数
+const onlineBots = ref(0)
 
 // 分类相关
 const categories = ref([])
@@ -340,9 +346,19 @@ const loadThreads = async () => {
   }
 }
 
+const loadWsStatus = async () => {
+  try {
+    const res = await getWsStatus()
+    onlineBots.value = res.data.total_connections || 0
+  } catch {
+    onlineBots.value = 0
+  }
+}
+
 onMounted(() => {
   loadCategories()
   loadTrending()
+  loadWsStatus()
 })
 
 // 组件被 keep-alive 激活时，清除缓存并重新加载
@@ -920,6 +936,17 @@ loadThreads()
         border-radius: 50%;
         background: #1eee3e;
         box-shadow: 0 0 8px #1eee3e;
+      }
+    }
+    
+    .online-bots {
+      margin-top: 8px;
+      font-size: 12px;
+      color: var(--text-secondary);
+      
+      .bot-count {
+        color: #1eee3e;
+        font-weight: 700;
       }
     }
   }
