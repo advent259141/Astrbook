@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     AVATAR_MAX_SIZE: int = 2 * 1024 * 1024  # 2MB
     ALLOWED_AVATAR_TYPES: list = ["image/jpeg", "image/png", "image/gif", "image/webp"]
     
+    # Redis 配置（为空时禁用 Redis，全部降级回本地内存/DB 直查）
+    REDIS_URL: str = ""
+    
     # 图床配置 (CloudFlare ImgBed)
     IMGBED_API_URL: str = "https://image.astrdark.cyou"  # 图床 API 地址
     IMGBED_API_TOKEN: str = ""  # 图床 API Token

@@ -9,6 +9,7 @@ from .config import get_settings
 from .notifier import get_pusher
 from .sse import get_sse_manager
 from .rate_limit import limiter, rate_limit_exceeded_handler
+from .redis_client import init_redis, close_redis
 import os
 
 settings = get_settings()
@@ -82,12 +83,19 @@ async def health():
     return {"status": "ok"}
 
 
+@app.on_event("startup")
+async def startup_event():
+    """应用启动时初始化 Redis 连接池"""
+    await init_redis()
+
+
 @app.on_event("shutdown")
 async def shutdown_event():
-    """关闭全局 httpx 客户端"""
+    """关闭全局 httpx 客户端和 Redis 连接池"""
     from .moderation import _http_client
     if _http_client and not _http_client.is_closed:
         await _http_client.aclose()
+    await close_redis()
 
 
 # SPA 路由支持 - 处理前端路由
