@@ -1,7 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func, and_, or_, literal_column, literal, case, union_all
+from sqlalchemy import func, and_, or_, literal_column, literal, case, union_all, extract, text
 from typing import Literal, Optional
 from datetime import datetime, timedelta
 from ..database import get_db
@@ -18,13 +18,14 @@ from ..moderation import get_moderator
 from .blocks import get_blocked_user_ids
 from ..level_service import add_exp_for_post, get_user_level_info, batch_get_user_levels
 from .likes import get_user_liked_thread_ids, get_user_liked_reply_ids, is_thread_liked_by_user
+from ..rate_limit import limiter
 
 router = APIRouter(prefix="/threads", tags=["帖子"])
 settings = get_settings()
 
 
 @router.get("/categories", response_model=list[CategoryInfo])
-async def list_categories():
+def list_categories():
     """
     获取所有帖子分类
     """
@@ -32,14 +33,14 @@ async def list_categories():
 
 
 @router.get("/trending")
-async def get_trending(
+def get_trending(
     days: int = Query(7, ge=1, le=30, description="统计天数"),
     limit: int = Query(5, ge=1, le=10, description="返回数量"),
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_optional_user)
 ):
     """
-    获取热门趋势（带时间衰减的热度算法）
+    获取热门趋势（带时间衰减的热度算法，SQL 层排序）
     
     热度公式: score = (views * 0.1 + replies * 2 + likes * 1.5) / (age_hours + 2) ^ 1.5
     - 浏览量、回复数、点赞数共同决定基础热度
@@ -47,10 +48,22 @@ async def get_trending(
     """
     # 计算时间范围
     since = datetime.utcnow() - timedelta(days=days)
+    now = datetime.utcnow()
     
-    # 构建查询：拉取时间范围内的候选帖子（多取一些用于排序）
+    # SQL 层计算 age_hours
+    age_hours = extract('epoch', now - Thread.created_at) / 3600.0
+    
+    # SQL 层计算热度分数
+    score_expr = (
+        (func.coalesce(Thread.view_count, 0) * 0.1
+         + func.coalesce(Thread.reply_count, 0) * 2
+         + func.coalesce(Thread.like_count, 0) * 1.5)
+        / func.power(age_hours + 2, 1.5)
+    ).label("score")
+    
+    # 构建查询
     query = (
-        db.query(Thread)
+        db.query(Thread, score_expr)
         .filter(Thread.created_at >= since)
     )
     
@@ -60,27 +73,13 @@ async def get_trending(
         if blocked_user_ids:
             query = query.filter(~Thread.author_id.in_(blocked_user_ids))
     
-    # 取候选帖子（取较多数量，在 Python 层面排序）
-    candidates = query.limit(100).all()
-    
-    # 使用时间衰减算法计算热度
-    now = datetime.utcnow()
-    scored_threads = []
-    for t in candidates:
-        created = t.created_at.replace(tzinfo=None) if t.created_at else now
-        age_hours = max((now - created).total_seconds() / 3600, 0)
-        
-        views = t.view_count or 0
-        replies = t.reply_count or 0
-        likes = t.like_count or 0
-        
-        # 热度公式：互动加权 / 时间衰减
-        score = (views * 0.1 + replies * 2 + likes * 1.5) / ((age_hours + 2) ** 1.5)
-        scored_threads.append((t, score))
-    
-    # 按热度排序，取前 limit 个
-    scored_threads.sort(key=lambda x: x[1], reverse=True)
-    hot_threads = scored_threads[:limit]
+    # SQL 中排序并限制数量，无需拉取 100 条到 Python
+    hot_threads = (
+        query
+        .order_by(score_expr.desc())
+        .limit(limit)
+        .all()
+    )
     
     # 提取关键词（从标题中提取）
     trends = []
@@ -104,14 +103,14 @@ async def get_trending(
             "view_count": t.view_count or 0,
             "like_count": t.like_count or 0,
             "category": t.category,
-            "score": round(score, 2)
+            "score": round(float(score), 2) if score else 0
         })
     
     return {"trends": trends, "period_days": days}
 
 
 @router.get("/search")
-async def search_threads(
+def search_threads(
     q: str = Query(..., min_length=1, max_length=100, description="搜索关键词"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=50),
@@ -250,7 +249,7 @@ def get_reply_response(reply: Reply, preview_count: int = 3, current_user_id: Op
 
 
 @router.get("")
-async def list_threads(
+def list_threads(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     category: Optional[str] = Query(None, description="分类筛选: chat/deals/misc/tech/help/intro/acg"),
@@ -365,7 +364,9 @@ async def list_threads(
 
 
 @router.post("", response_model=ThreadDetail)
+@limiter.limit("10/minute")
 async def create_thread(
+    request: Request,
     data: ThreadCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -415,7 +416,7 @@ async def create_thread(
 
 
 @router.get("/{thread_id}")
-async def get_thread(
+def get_thread(
     thread_id: int,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
@@ -628,7 +629,7 @@ async def get_thread(
 
 
 @router.delete("/{thread_id}")
-async def delete_thread(
+def delete_thread(
     thread_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)

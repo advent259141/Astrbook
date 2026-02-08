@@ -15,8 +15,9 @@ from ..models import (
     Notification,
 )
 from ..schemas import AdminLogin, AdminLoginResponse, AdminResponse, THREAD_CATEGORIES
-from ..auth import verify_admin, verify_password, generate_token
+from ..auth import verify_admin, verify_password, generate_token, invalidate_user_cache
 from ..moderation import fetch_available_models, DEFAULT_MODERATION_PROMPT
+from ..settings_utils import get_settings_batch
 
 router = APIRouter(prefix="/admin", tags=["管理"])
 
@@ -34,7 +35,7 @@ class UserBanRequest(BaseModel):
 
 
 @router.post("/login", response_model=AdminLoginResponse)
-async def admin_login(data: AdminLogin, db: Session = Depends(get_db)):
+def admin_login(data: AdminLogin, db: Session = Depends(get_db)):
     """
     管理员登录
     """
@@ -51,7 +52,7 @@ async def admin_login(data: AdminLogin, db: Session = Depends(get_db)):
 
 
 @router.get("/me", response_model=AdminResponse)
-async def get_admin_info(admin: Admin = Depends(verify_admin)):
+def get_admin_info(admin: Admin = Depends(verify_admin)):
     """
     获取当前管理员信息
     """
@@ -59,7 +60,7 @@ async def get_admin_info(admin: Admin = Depends(verify_admin)):
 
 
 @router.get("/stats")
-async def get_stats(
+def get_stats(
     db: Session = Depends(get_db), admin: Admin = Depends(verify_admin)
 ):
     """
@@ -88,7 +89,7 @@ async def get_stats(
 
 
 @router.get("/users")
-async def list_users(
+def list_users(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     q: Optional[str] = Query(None),
@@ -142,7 +143,7 @@ async def list_users(
 
 
 @router.post("/users/{user_id}/ban")
-async def ban_user(
+def ban_user(
     user_id: int,
     data: UserBanRequest = None,
     db: Session = Depends(get_db),
@@ -157,6 +158,7 @@ async def ban_user(
     user.is_banned = True
     user.ban_reason = data.reason if data and data.reason else "违反社区规定"
     db.commit()
+    invalidate_user_cache(user_id)
 
     return {
         "message": "用户已封禁",
@@ -167,7 +169,7 @@ async def ban_user(
 
 
 @router.delete("/users/{user_id}/ban")
-async def unban_user(
+def unban_user(
     user_id: int, db: Session = Depends(get_db), admin: Admin = Depends(verify_admin)
 ):
     """解封用户（需要管理员权限）"""
@@ -179,12 +181,13 @@ async def unban_user(
     user.is_banned = False
     user.ban_reason = None
     db.commit()
+    invalidate_user_cache(user_id)
 
     return {"message": "用户已解封", "user_id": user.id, "is_banned": False}
 
 
 @router.delete("/users/{user_id}")
-async def delete_user(
+def delete_user(
     user_id: int, db: Session = Depends(get_db), admin: Admin = Depends(verify_admin)
 ):
     """
@@ -257,7 +260,7 @@ async def delete_user(
 
 
 @router.get("/threads")
-async def list_threads(
+def list_threads(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     q: Optional[str] = Query(None),
@@ -315,7 +318,7 @@ async def list_threads(
 
 
 @router.delete("/threads/{thread_id}")
-async def admin_delete_thread(
+def admin_delete_thread(
     thread_id: int, db: Session = Depends(get_db), admin: Admin = Depends(verify_admin)
 ):
     """
@@ -360,7 +363,7 @@ async def admin_delete_thread(
 
 
 @router.patch("/threads/{thread_id}/category")
-async def update_thread_category(
+def update_thread_category(
     thread_id: int,
     data: ThreadCategoryUpdate,
     db: Session = Depends(get_db),
@@ -417,42 +420,46 @@ class ModerationTestRequest(BaseModel):
 
 
 def _get_setting(db: Session, key: str, default: str = "") -> str:
-    """获取设置值"""
-    setting = db.query(SystemSettings).filter(SystemSettings.key == key).first()
-    return setting.value if setting and setting.value else default
+    """获取设置值（使用公共工具函数）"""
+    from ..settings_utils import get_setting
+    return get_setting(db, key, default)
 
 
 def _set_setting(db: Session, key: str, value: str):
-    """设置值"""
-    setting = db.query(SystemSettings).filter(SystemSettings.key == key).first()
-    if setting:
-        setting.value = value
-    else:
-        setting = SystemSettings(key=key, value=value)
-        db.add(setting)
+    """设置值（使用公共工具函数）"""
+    from ..settings_utils import set_setting
+    set_setting(db, key, value)
 
 
 @router.get("/settings/moderation")
-async def get_moderation_settings(
+def get_moderation_settings(
     db: Session = Depends(get_db), admin: Admin = Depends(verify_admin)
 ):
     """
     获取审核配置
     """
+    s = get_settings_batch(db, [
+        "moderation_enabled", "moderation_api_base",
+        "moderation_api_key", "moderation_model", "moderation_prompt"
+    ], defaults={
+        "moderation_enabled": "false",
+        "moderation_api_base": "https://api.openai.com/v1",
+        "moderation_api_key": "",
+        "moderation_model": "gpt-4o-mini",
+        "moderation_prompt": DEFAULT_MODERATION_PROMPT,
+    })
     return {
-        "enabled": _get_setting(db, "moderation_enabled", "false") == "true",
-        "api_base": _get_setting(
-            db, "moderation_api_base", "https://api.openai.com/v1"
-        ),
-        "api_key": _get_setting(db, "moderation_api_key", ""),
-        "model": _get_setting(db, "moderation_model", "gpt-4o-mini"),
-        "prompt": _get_setting(db, "moderation_prompt", DEFAULT_MODERATION_PROMPT),
+        "enabled": s["moderation_enabled"] == "true",
+        "api_base": s["moderation_api_base"],
+        "api_key": s["moderation_api_key"],
+        "model": s["moderation_model"],
+        "prompt": s["moderation_prompt"],
         "default_prompt": DEFAULT_MODERATION_PROMPT,
     }
 
 
 @router.put("/settings/moderation")
-async def update_moderation_settings(
+def update_moderation_settings(
     data: ModerationSettingsUpdate,
     db: Session = Depends(get_db),
     admin: Admin = Depends(verify_admin),
@@ -487,21 +494,25 @@ class ImageBedSettingsUpdate(BaseModel):
 
 
 @router.get("/settings/imagebed")
-async def get_imagebed_settings(
+def get_imagebed_settings(
     db: Session = Depends(get_db), admin: Admin = Depends(verify_admin)
 ):
     """
     获取图床配置
     """
+    s = get_settings_batch(db, ["imgbed_daily_limit", "imgbed_max_size"], defaults={
+        "imgbed_daily_limit": "20",
+        "imgbed_max_size": str(10 * 1024 * 1024),
+    })
     return {
-        "daily_limit": int(_get_setting(db, "imgbed_daily_limit", "20")),
-        "max_size_mb": int(_get_setting(db, "imgbed_max_size", str(10 * 1024 * 1024)))
+        "daily_limit": int(s["imgbed_daily_limit"]),
+        "max_size_mb": int(s["imgbed_max_size"])
         // (1024 * 1024),
     }
 
 
 @router.put("/settings/imagebed")
-async def update_imagebed_settings(
+def update_imagebed_settings(
     data: ImageBedSettingsUpdate,
     db: Session = Depends(get_db),
     admin: Admin = Depends(verify_admin),
@@ -646,7 +657,7 @@ class ModerationLogResponse(BaseModel):
 
 
 @router.get("/moderation/logs")
-async def get_moderation_logs(
+def get_moderation_logs(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     passed: Optional[bool] = None,
@@ -701,7 +712,7 @@ async def get_moderation_logs(
 
 
 @router.get("/moderation/stats")
-async def get_moderation_stats(
+def get_moderation_stats(
     db: Session = Depends(get_db), admin: Admin = Depends(verify_admin)
 ):
     """

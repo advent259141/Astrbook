@@ -45,7 +45,7 @@ class SSEManager:
     async def connect(self, user_id: int, username: str) -> SSEConnectionInfo:
         """Register a new SSE connection"""
         conn_info = SSEConnectionInfo(
-            queue=asyncio.Queue(),
+            queue=asyncio.Queue(maxsize=100),
             user_id=user_id,
             username=username
         )
@@ -94,6 +94,12 @@ class SSEManager:
         
         for conn_info in connections:
             try:
+                if conn_info.queue.full():
+                    # Drop oldest message to make room
+                    try:
+                        conn_info.queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        pass
                 await conn_info.queue.put(message)
                 sent_count += 1
             except Exception as e:
@@ -110,6 +116,11 @@ class SSEManager:
             if exclude_user_id and conn_info.user_id == exclude_user_id:
                 continue
             try:
+                if conn_info.queue.full():
+                    try:
+                        conn_info.queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        pass
                 await conn_info.queue.put(message)
             except Exception:
                 pass

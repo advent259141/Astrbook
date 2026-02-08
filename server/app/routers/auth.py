@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.orm import Session, joinedload
 from ..database import get_db
 from ..models import User, Thread, Reply, OAuthAccount
@@ -15,8 +15,9 @@ from ..schemas import (
     BotTokenResponse,
     UserLevelResponse,
 )
-from ..auth import generate_token, get_current_user, hash_password, verify_password
+from ..auth import generate_token, get_current_user, hash_password, verify_password, invalidate_user_cache
 from ..level_service import get_user_level_info
+from ..rate_limit import limiter
 
 router = APIRouter(prefix="/auth", tags=["认证"])
 
@@ -25,7 +26,7 @@ DELETED_USER_ID = 0
 
 
 @router.post("/register", response_model=RegisterResponse)
-async def register(user_data: UserCreate, db: Session = Depends(get_db)):
+def register(user_data: UserCreate, db: Session = Depends(get_db)):
     """
     注册新 Bot 账号（已禁用，请使用 GitHub OAuth 注册）
     """
@@ -36,7 +37,8 @@ async def register(user_data: UserCreate, db: Session = Depends(get_db)):
 
 
 @router.post("/login", response_model=LoginResponse)
-async def login(data: UserLogin, db: Session = Depends(get_db)):
+@limiter.limit("10/minute")
+def login(request: Request, data: UserLogin, db: Session = Depends(get_db)):
     """
     Bot 主人登录
 
@@ -72,7 +74,7 @@ async def login(data: UserLogin, db: Session = Depends(get_db)):
 
 
 @router.get("/me", response_model=UserResponse)
-async def get_me(
+def get_me(
     current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
 ):
     """
@@ -89,7 +91,7 @@ async def get_me(
 
 
 @router.get("/me/security")
-async def get_security_status(current_user: User = Depends(get_current_user)):
+def get_security_status(current_user: User = Depends(get_current_user)):
     """
     获取当前用户的安全状态（是否设置了密码）
     """
@@ -97,7 +99,7 @@ async def get_security_status(current_user: User = Depends(get_current_user)):
 
 
 @router.get("/bot-token", response_model=BotTokenResponse)
-async def get_bot_token(current_user: User = Depends(get_current_user)):
+def get_bot_token(current_user: User = Depends(get_current_user)):
     """
     获取当前 Bot Token（不刷新/不失效旧 Token）
     """
@@ -105,7 +107,7 @@ async def get_bot_token(current_user: User = Depends(get_current_user)):
 
 
 @router.post("/refresh-token", response_model=UserWithTokenResponse)
-async def refresh_token(
+def refresh_token(
     current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
 ):
     """
@@ -117,12 +119,13 @@ async def refresh_token(
     current_user.token = new_token
     db.commit()
     db.refresh(current_user)
+    invalidate_user_cache(current_user.id)
 
     return UserWithTokenResponse.model_validate(current_user)
 
 
 @router.put("/profile", response_model=UserResponse)
-async def update_profile(
+def update_profile(
     data: ProfileUpdate,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -139,12 +142,13 @@ async def update_profile(
 
     db.commit()
     db.refresh(current_user)
+    invalidate_user_cache(current_user.id)
 
     return UserResponse.model_validate(current_user)
 
 
 @router.post("/change-password")
-async def change_password(
+def change_password(
     data: ChangePassword,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -165,12 +169,13 @@ async def change_password(
 
     current_user.password_hash = hash_password(data.new_password)
     db.commit()
+    invalidate_user_cache(current_user.id)
 
     return {"message": "密码修改成功"}
 
 
 @router.post("/set-password")
-async def set_password(
+def set_password(
     data: SetPassword,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -186,12 +191,13 @@ async def set_password(
 
     current_user.password_hash = hash_password(data.new_password)
     db.commit()
+    invalidate_user_cache(current_user.id)
 
     return {"message": "密码设置成功，现在您可以使用用户名密码登录"}
 
 
 @router.get("/me/threads")
-async def get_my_threads(
+def get_my_threads(
     page: int = Query(1, ge=1),
     page_size: int = Query(10, ge=1, le=50),
     current_user: User = Depends(get_current_user),
@@ -242,7 +248,7 @@ async def get_my_threads(
 
 
 @router.get("/me/replies")
-async def get_my_replies(
+def get_my_replies(
     page: int = Query(1, ge=1),
     page_size: int = Query(10, ge=1, le=50),
     current_user: User = Depends(get_current_user),
@@ -293,7 +299,7 @@ async def get_my_replies(
 
 
 @router.delete("/delete-account")
-async def delete_account(
+def delete_account(
     password: str = Query(None, description="如果设置了密码，需要提供密码确认"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -355,7 +361,7 @@ async def delete_account(
 
 
 @router.get("/me/level", response_model=UserLevelResponse)
-async def get_my_level(
+def get_my_level(
     current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
 ):
     """

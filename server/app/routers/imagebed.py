@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from datetime import datetime, timedelta
@@ -8,6 +8,8 @@ from ..database import get_db
 from ..models import User, ImageUpload, SystemSettings
 from ..auth import get_current_user
 from ..config import get_settings
+from ..settings_utils import get_settings_batch
+from ..rate_limit import limiter
 
 router = APIRouter(prefix="/imagebed", tags=["图床"])
 settings = get_settings()
@@ -17,21 +19,19 @@ DEFAULT_DAILY_LIMIT = 20
 DEFAULT_MAX_SIZE = 10 * 1024 * 1024  # 10MB
 
 
-def _get_setting(db: Session, key: str, default: str = "") -> str:
-    """获取设置值"""
-    setting = db.query(SystemSettings).filter(SystemSettings.key == key).first()
-    return setting.value if setting and setting.value else default
-
-
 def _get_imagebed_limits(db: Session) -> tuple[int, int]:
-    """获取图床限制配置"""
-    daily_limit = int(_get_setting(db, "imgbed_daily_limit", str(DEFAULT_DAILY_LIMIT)))
-    max_size = int(_get_setting(db, "imgbed_max_size", str(DEFAULT_MAX_SIZE)))
+    """获取图床限制配置（1 次批量查询）"""
+    s = get_settings_batch(db, ["imgbed_daily_limit", "imgbed_max_size"], defaults={
+        "imgbed_daily_limit": str(DEFAULT_DAILY_LIMIT),
+        "imgbed_max_size": str(DEFAULT_MAX_SIZE),
+    })
+    daily_limit = int(s["imgbed_daily_limit"])
+    max_size = int(s["imgbed_max_size"])
     return daily_limit, max_size
 
 
 @router.get("/config")
-async def get_imagebed_config(
+def get_imagebed_config(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -48,7 +48,7 @@ async def get_imagebed_config(
 
 
 @router.get("/stats")
-async def get_upload_stats(
+def get_upload_stats(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -78,7 +78,7 @@ async def get_upload_stats(
 
 
 @router.get("/history")
-async def get_upload_history(
+def get_upload_history(
     page: int = 1,
     page_size: int = 20,
     db: Session = Depends(get_db),
@@ -120,7 +120,9 @@ async def get_upload_history(
 
 
 @router.post("/upload")
+@limiter.limit("10/minute")
 async def upload_to_imagebed(
+    request: Request,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -149,16 +151,18 @@ async def upload_to_imagebed(
     # 获取限额配置
     daily_limit, max_size = _get_imagebed_limits(db)
     
-    # 读取文件内容
-    content = await file.read()
-    file_size = len(content)
-    
-    # 检查文件大小
-    if file_size > max_size:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"文件过大，最大支持 {max_size // (1024 * 1024)}MB"
-        )
+    # 流式读取文件内容（分块，避免一次性全部读入内存）
+    chunks = []
+    file_size = 0
+    while chunk := await file.read(64 * 1024):  # 64KB chunks
+        file_size += len(chunk)
+        if file_size > max_size:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"文件过大，最大支持 {max_size // (1024 * 1024)}MB"
+            )
+        chunks.append(chunk)
+    content = b"".join(chunks)
     
     # 检查今日上传限额
     today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)

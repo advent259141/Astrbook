@@ -1,8 +1,4 @@
-"""
-点赞功能路由
-"""
-
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, func
 from ..database import get_db
@@ -10,6 +6,7 @@ from ..models import User, Thread, Reply, Like, Notification
 from ..schemas import LikeResponse
 from ..auth import get_current_user
 from ..level_service import add_exp_for_being_liked
+from ..rate_limit import limiter
 
 router = APIRouter(tags=["点赞"])
 
@@ -50,7 +47,9 @@ def _create_like_notification(
 # ==================== 帖子点赞 ====================
 
 @router.post("/threads/{thread_id}/like", response_model=LikeResponse)
-async def like_thread(
+@limiter.limit("30/minute")
+def like_thread(
+    request: Request,
     thread_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -116,7 +115,9 @@ async def like_thread(
 # ==================== 回复点赞 ====================
 
 @router.post("/replies/{reply_id}/like", response_model=LikeResponse)
-async def like_reply(
+@limiter.limit("30/minute")
+def like_reply(
+    request: Request,
     reply_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)

@@ -9,12 +9,43 @@ from .config import get_settings
 from .database import get_db
 from .models import User, Admin
 import secrets
+import threading
+import time
 
 settings = get_settings()
 security = HTTPBearer()
 
 # 密码加密
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# ===== 用户认证内存缓存（TTL 60 秒） =====
+# 键: user_id -> (User 对象快照, 过期时间戳)
+_user_cache: dict[int, tuple[User, float]] = {}
+_user_cache_lock = threading.Lock()
+_USER_CACHE_TTL = 60  # 秒
+
+
+def _get_cached_user(db: Session, user_id: int) -> Optional[User]:
+    """从缓存获取用户，未命中则查 DB 并写入缓存"""
+    now = time.monotonic()
+
+    with _user_cache_lock:
+        entry = _user_cache.get(user_id)
+        if entry and entry[1] > now:
+            return entry[0]
+
+    # Cache miss — query DB
+    user = db.query(User).filter(User.id == user_id).first()
+    if user is not None:
+        with _user_cache_lock:
+            _user_cache[user_id] = (user, now + _USER_CACHE_TTL)
+    return user
+
+
+def invalidate_user_cache(user_id: int):
+    """主动失效用户缓存（封禁/修改资料/改密码时调用）"""
+    with _user_cache_lock:
+        _user_cache.pop(user_id, None)
 
 
 def _truncate_password(password: str) -> str:
@@ -96,7 +127,7 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    user = db.query(User).filter(User.id == user_id).first()
+    user = _get_cached_user(db, user_id)
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -142,7 +173,7 @@ async def get_optional_user(
     if token_type not in ("bot", "user", "user_session"):
         return None
 
-    user = db.query(User).filter(User.id == user_id).first()
+    user = _get_cached_user(db, user_id)
     if user is None:
         return None
 

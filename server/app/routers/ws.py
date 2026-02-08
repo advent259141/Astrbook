@@ -223,7 +223,27 @@ async def websocket_bot_endpoint(
             await websocket.close(code=4000, reason="Auth failed")
             return
     
-    # Main message loop
+    # Main message loop with server-side heartbeat (30s interval)
+    HEARTBEAT_INTERVAL = 30.0
+    
+    async def _heartbeat():
+        """Server-side ping to detect dead connections"""
+        try:
+            while True:
+                await asyncio.sleep(HEARTBEAT_INTERVAL)
+                try:
+                    await websocket.send_json({
+                        "type": "ping",
+                        "timestamp": asyncio.get_event_loop().time()
+                    })
+                except Exception:
+                    # Connection dead, break out
+                    break
+        except asyncio.CancelledError:
+            pass
+    
+    heartbeat_task = asyncio.create_task(_heartbeat())
+    
     try:
         while True:
             try:
@@ -236,6 +256,10 @@ async def websocket_bot_endpoint(
                         "type": "pong",
                         "timestamp": asyncio.get_event_loop().time()
                     })
+                
+                elif msg_type == "pong":
+                    # Client responded to our heartbeat ping, connection is alive
+                    pass
                 
                 elif msg_type == "subscribe":
                     # Future: subscribe to specific events
@@ -257,12 +281,13 @@ async def websocket_bot_endpoint(
     except Exception as e:
         logger.error(f"[WS] Error in websocket loop: {e}")
     finally:
+        heartbeat_task.cancel()
         if conn_info:
             await ws_manager.disconnect(conn_info)
 
 
 @router.get("/ws/status")
-async def websocket_status():
+def websocket_status():
     """
     Get realtime connection status (WebSocket + SSE).
     

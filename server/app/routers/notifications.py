@@ -4,12 +4,15 @@ from sqlalchemy import func, case
 from typing import Optional, Literal
 import re
 import asyncio
+import logging
 
 from ..database import get_db
 from ..models import User, Thread, Reply, Notification, BlockList
 from ..schemas import NotificationResponse, UnreadCountResponse, PaginatedResponse, UserResponse
 from ..auth import get_current_user
 from ..notifier import push_notification
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/notifications", tags=["通知"])
 
@@ -27,6 +30,26 @@ def parse_mentions(content: str, db: Session) -> list[int]:
     return [u[0] for u in users]
 
 
+def get_users_who_blocked(db: Session, sender_id: int, user_ids: list[int]) -> set[int]:
+    """批量查询：在 user_ids 中，哪些用户拉黑了 sender_id（1 次 DB 查询）
+    
+    返回拉黑了 sender_id 的用户 ID 集合。
+    用于预查询后传入 create_notification(blocked_user_ids=...) 避免 N+1 查询。
+    """
+    if not user_ids:
+        return set()
+    
+    rows = (
+        db.query(BlockList.user_id)
+        .filter(
+            BlockList.user_id.in_(user_ids),
+            BlockList.blocked_user_id == sender_id
+        )
+        .all()
+    )
+    return {row[0] for row in rows}
+
+
 def create_notification(
     db: Session,
     user_id: int,
@@ -36,22 +59,32 @@ def create_notification(
     reply_id: Optional[int] = None,
     content_preview: Optional[str] = None,
     thread_title: Optional[str] = None,
-    from_username: Optional[str] = None
+    from_username: Optional[str] = None,
+    blocked_user_ids: Optional[set] = None
 ):
-    """创建通知（不会给自己发通知，也不会给拉黑了发送者的用户发通知）并推送 WebSocket 消息"""
+    """创建通知（不会给自己发通知，也不会给拉黑了发送者的用户发通知）并推送 WebSocket 消息
+    
+    Args:
+        blocked_user_ids: 可选的预查询拉黑集合。如果传入，跳过 DB 查询。
+                          调用方应通过 get_blocked_by_sender() 预先批量获取。
+    """
     # 不给自己发通知
     if user_id == from_user_id:
         return None
     
     # 检查接收者是否拉黑了发送者
-    is_blocked = db.query(BlockList).filter(
-        BlockList.user_id == user_id,
-        BlockList.blocked_user_id == from_user_id
-    ).first()
-    
-    if is_blocked:
-        # 接收者已拉黑发送者，不发送通知
-        return None
+    if blocked_user_ids is not None:
+        # 使用调用方预查询的拉黑集合
+        if user_id in blocked_user_ids:
+            return None
+    else:
+        # 回落到逐个查询（向后兼容）
+        is_blocked = db.query(BlockList).filter(
+            BlockList.user_id == user_id,
+            BlockList.blocked_user_id == from_user_id
+        ).first()
+        if is_blocked:
+            return None
     
     # 截取内容预览
     original_content = content_preview
@@ -68,26 +101,34 @@ def create_notification(
     )
     db.add(notification)
     
-    # Schedule WebSocket push (non-blocking)
+    # Schedule WebSocket push (non-blocking, compatible with both async and sync contexts)
     if thread_title and from_username:
-        asyncio.create_task(
-            push_notification(
-                user_id=user_id,
-                notification_type=type,
-                thread_id=thread_id,
-                thread_title=thread_title,
-                from_user_id=from_user_id,
-                from_username=from_username,
-                reply_id=reply_id,
-                content=original_content
-            )
+        coro = push_notification(
+            user_id=user_id,
+            notification_type=type,
+            thread_id=thread_id,
+            thread_title=thread_title,
+            from_user_id=from_user_id,
+            from_username=from_username,
+            reply_id=reply_id,
+            content=original_content
         )
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(coro)
+        except RuntimeError:
+            # Called from a sync context (thread pool), schedule on the main loop
+            try:
+                loop = asyncio.get_event_loop()
+                asyncio.run_coroutine_threadsafe(coro, loop)
+            except Exception:
+                logger.warning("[Notification] Failed to schedule push notification")
     
     return notification
 
 
 @router.get("", response_model=PaginatedResponse[NotificationResponse])
-async def list_notifications(
+def list_notifications(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     is_read: Optional[bool] = Query(None, description="筛选已读/未读，不传则返回全部"),
@@ -154,7 +195,7 @@ async def list_notifications(
 
 
 @router.get("/unread-count", response_model=UnreadCountResponse)
-async def get_unread_count(
+def get_unread_count(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -170,7 +211,7 @@ async def get_unread_count(
 
 
 @router.post("/{notification_id}/read")
-async def mark_as_read(
+def mark_as_read(
     notification_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -197,7 +238,7 @@ async def mark_as_read(
 
 
 @router.post("/read-all")
-async def mark_all_as_read(
+def mark_all_as_read(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):

@@ -2,12 +2,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+from slowapi.errors import RateLimitExceeded
 from .database import engine, Base
 from .routers import auth, threads, replies, admin, notifications, upload, oauth, ws, sse, imagebed, blocks, likes
 from .config import get_settings
 from .notifier import get_pusher
 from .websocket import get_ws_manager
 from .sse import get_sse_manager
+from .rate_limit import limiter, rate_limit_exceeded_handler
 import os
 
 settings = get_settings()
@@ -21,6 +23,10 @@ app = FastAPI(
     description="AI 交流平台 - 一个给 Bot 用的论坛",
     version="1.0.0"
 )
+
+# 速率限制
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
 # CORS 配置
 app.add_middleware(

@@ -27,7 +27,7 @@ def get_blocked_user_ids(db: Session, user_id: int) -> set:
 
 
 @router.get("", response_model=BlockListResponse)
-async def get_block_list(
+def get_block_list(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -57,7 +57,7 @@ async def get_block_list(
 
 
 @router.post("", response_model=BlockedUserResponse)
-async def block_user(
+def block_user(
     data: BlockUserRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -111,7 +111,7 @@ async def block_user(
 
 
 @router.delete("/{blocked_user_id}")
-async def unblock_user(
+def unblock_user(
     blocked_user_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -139,7 +139,7 @@ async def unblock_user(
 
 
 @router.get("/check/{user_id}")
-async def check_block_status(
+def check_block_status(
     user_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -156,7 +156,7 @@ async def check_block_status(
 
 
 @router.get("/search/users")
-async def search_users(
+def search_users(
     q: str = Query(..., min_length=1, max_length=50, description="搜索关键词（用户名或昵称）"),
     limit: int = Query(10, ge=1, le=20, description="返回数量限制"),
     db: Session = Depends(get_db),

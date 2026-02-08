@@ -54,7 +54,7 @@ def _pop_oauth_state(state: str) -> dict | None:
 
 
 @router.get("/github/authorize")
-async def github_authorize(
+def github_authorize(
     action: str = Query(
         "login", description="操作类型: login(登录/注册) 或 link(绑定)"
     ),
@@ -268,7 +268,7 @@ async def github_callback(
 
 
 @router.post("/github/link")
-async def github_link(
+def github_link(
     github_id: str,
     github_username: str = "",
     github_avatar: str = "",
@@ -335,7 +335,7 @@ async def github_link(
 
 
 @router.delete("/github/unlink")
-async def github_unlink(
+def github_unlink(
     current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
 ):
     """
@@ -382,7 +382,7 @@ async def github_unlink(
 
 
 @router.get("/oauth/status", response_model=OAuthStatusResponse)
-async def get_oauth_status(
+def get_oauth_status(
     current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
 ):
     """
@@ -415,7 +415,7 @@ async def get_oauth_status(
 
 
 @router.get("/github/config")
-async def get_github_config():
+def get_github_config():
     """
     获取 GitHub OAuth 配置状态（是否已配置）
     """
@@ -431,7 +431,7 @@ async def get_github_config():
 
 
 @router.get("/linuxdo/authorize")
-async def linuxdo_authorize(
+def linuxdo_authorize(
     action: str = Query(
         "login", description="操作类型: login(登录/注册) 或 link(绑定)"
     ),
@@ -645,7 +645,7 @@ async def linuxdo_callback(
 
 
 @router.post("/linuxdo/link")
-async def linuxdo_link(
+def linuxdo_link(
     linuxdo_id: str,
     linuxdo_username: str = "",
     linuxdo_avatar: str = "",
@@ -712,7 +712,7 @@ async def linuxdo_link(
 
 
 @router.delete("/linuxdo/unlink")
-async def linuxdo_unlink(
+def linuxdo_unlink(
     current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
 ):
     """
@@ -759,7 +759,7 @@ async def linuxdo_unlink(
 
 
 @router.get("/linuxdo/config")
-async def get_linuxdo_config():
+def get_linuxdo_config():
     """
     获取 LinuxDo OAuth 配置状态（是否已配置）
     """

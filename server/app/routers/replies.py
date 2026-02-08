@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
@@ -13,17 +13,20 @@ from ..schemas import (
 from ..auth import get_current_user
 from ..config import get_settings
 from ..serializers import LLMSerializer
-from .notifications import create_notification, parse_mentions
+from .notifications import create_notification, parse_mentions, get_users_who_blocked
 from ..moderation import get_moderator
 from .blocks import get_blocked_user_ids
 from ..level_service import add_exp_for_reply
+from ..rate_limit import limiter
 
 router = APIRouter(tags=["回复"])
 settings = get_settings()
 
 
 @router.post("/threads/{thread_id}/replies", response_model=ReplyResponse)
+@limiter.limit("20/minute")
 async def create_reply(
+    request: Request,
     thread_id: int,
     data: ReplyCreate,
     db: Session = Depends(get_db),
@@ -79,6 +82,13 @@ async def create_reply(
     
     db.flush()  # 先 flush 获取 reply.id
     
+    # 解析 @ 提及
+    mentioned_user_ids = parse_mentions(data.content, db)
+    
+    # 批量预查询：哪些通知目标拉黑了当前用户（1 次 DB 查询代替 N+1 次）
+    all_notify_targets = list({thread.author_id} | set(mentioned_user_ids))
+    blocked_set = get_users_who_blocked(db, current_user.id, all_notify_targets)
+    
     # 创建通知：通知帖子作者有人回复（带 WebSocket 推送）
     create_notification(
         db=db,
@@ -89,11 +99,11 @@ async def create_reply(
         reply_id=reply.id,
         content_preview=data.content,
         thread_title=thread.title,
-        from_username=current_user.nickname or current_user.username
+        from_username=current_user.nickname or current_user.username,
+        blocked_user_ids=blocked_set
     )
     
-    # 解析 @ 并创建通知
-    mentioned_user_ids = parse_mentions(data.content, db)
+    # 创建 @提及 通知
     for user_id in mentioned_user_ids:
         if user_id != thread.author_id:  # 避免重复通知
             create_notification(
@@ -105,7 +115,8 @@ async def create_reply(
                 reply_id=reply.id,
                 content_preview=data.content,
                 thread_title=thread.title,
-                from_username=current_user.nickname or current_user.username
+                from_username=current_user.nickname or current_user.username,
+                blocked_user_ids=blocked_set
             )
     
     # 回帖获得经验
@@ -129,7 +140,7 @@ async def create_reply(
 
 
 @router.get("/replies/{reply_id}/sub_replies")
-async def list_sub_replies(
+def list_sub_replies(
     reply_id: int,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
@@ -223,7 +234,9 @@ async def list_sub_replies(
 
 
 @router.post("/replies/{reply_id}/sub_replies", response_model=SubReplyResponse)
+@limiter.limit("20/minute")
 async def create_sub_reply(
+    request: Request,
     reply_id: int,
     data: SubReplyCreate,
     db: Session = Depends(get_db),
@@ -307,6 +320,16 @@ async def create_sub_reply(
     thread_title = thread.title if thread else ""
     from_username = current_user.nickname or current_user.username
     
+    # 解析 @ 提及
+    mentioned_user_ids = parse_mentions(data.content, db)
+    
+    # 批量预查询：哪些通知目标拉黑了当前用户（1 次 DB 查询代替 N+1 次）
+    all_notify_targets = {parent.author_id}
+    if reply_to:
+        all_notify_targets.add(reply_to.author_id)
+    all_notify_targets.update(mentioned_user_ids)
+    blocked_set = get_users_who_blocked(db, current_user.id, list(all_notify_targets))
+    
     # 创建通知：通知父楼层作者（带 WebSocket 推送）
     create_notification(
         db=db,
@@ -317,7 +340,8 @@ async def create_sub_reply(
         reply_id=sub_reply.id,
         content_preview=data.content,
         thread_title=thread_title,
-        from_username=from_username
+        from_username=from_username,
+        blocked_user_ids=blocked_set
     )
     
     # 如果 reply_to 存在且不是父楼层作者，也通知被回复的人
@@ -331,11 +355,11 @@ async def create_sub_reply(
             reply_id=sub_reply.id,
             content_preview=data.content,
             thread_title=thread_title,
-            from_username=from_username
+            from_username=from_username,
+            blocked_user_ids=blocked_set
         )
     
-    # 解析 @ 并创建通知
-    mentioned_user_ids = parse_mentions(data.content, db)
+    # 创建 @提及 通知
     notified_ids = {parent.author_id}
     if reply_to:
         notified_ids.add(reply_to.author_id)
@@ -351,7 +375,8 @@ async def create_sub_reply(
                 reply_id=sub_reply.id,
                 content_preview=data.content,
                 thread_title=thread_title,
-                from_username=from_username
+                from_username=from_username,
+                blocked_user_ids=blocked_set
             )
     
     # 楼中楼也获得回帖经验
@@ -373,7 +398,7 @@ async def create_sub_reply(
 
 
 @router.delete("/replies/{reply_id}")
-async def delete_reply(
+def delete_reply(
     reply_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -417,6 +442,16 @@ async def delete_reply(
     if reply.parent_id is not None:
         db.query(Reply).filter(Reply.reply_to_id == reply_id).update(
             {Reply.reply_to_id: None}, synchronize_session=False
+        )
+    
+    # 更新帖子的 reply_count（主楼层删除时减去 1 + 楼中楼数量，楼中楼不影响）
+    if reply.parent_id is None:
+        deleted_count = 1 + len(sub_reply_ids)
+        db.query(Thread).filter(Thread.id == reply.thread_id).update(
+            {Thread.reply_count: func.greatest(
+                func.coalesce(Thread.reply_count, 0) - deleted_count, 0
+            )},
+            synchronize_session="fetch"
         )
     
     db.delete(reply)
