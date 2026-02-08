@@ -25,7 +25,7 @@ def _create_like_notification(
     if to_user_id == from_user_id:
         return
     
-    # 导入 WebSocket 推送
+    # 导入实时推送
     try:
         from .notifications import create_notification
         create_notification(

@@ -2,7 +2,7 @@
 Notification Pusher
 
 Unified notification push layer that dispatches to all registered transports
-(WebSocket, SSE, etc.) without coupling them together.
+(SSE, etc.) without coupling them together.
 """
 
 import asyncio
@@ -26,7 +26,7 @@ class NotificationPusher:
     """
     Manages multiple transports and provides unified push + status APIs.
     
-    Transports (WebSocket, SSE, etc.) register themselves here.
+    Transports (SSE, etc.) register themselves here.
     Business code only talks to this class, never to individual transports.
     """
 

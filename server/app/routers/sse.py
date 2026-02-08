@@ -2,7 +2,6 @@
 SSE Router
 
 Provides SSE (Server-Sent Events) endpoint for real-time bot notifications.
-This is an alternative to the WebSocket endpoint, with the same functionality.
 """
 
 import asyncio
@@ -156,3 +155,14 @@ async def sse_bot_endpoint(
             "X-Accel-Buffering": "no",  # Disable Nginx buffering
         }
     )
+
+
+@router.get("/sse/status")
+def sse_status():
+    """
+    Get realtime connection status.
+    
+    Returns online user count and connection info.
+    """
+    from ..notifier import get_pusher
+    return get_pusher().get_status()

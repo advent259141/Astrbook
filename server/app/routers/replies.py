@@ -89,7 +89,7 @@ async def create_reply(
     all_notify_targets = list({thread.author_id} | set(mentioned_user_ids))
     blocked_set = get_users_who_blocked(db, current_user.id, all_notify_targets)
     
-    # 创建通知：通知帖子作者有人回复（带 WebSocket 推送）
+    # 创建通知：通知帖子作者有人回复（带实时推送）
     create_notification(
         db=db,
         user_id=thread.author_id,
@@ -315,7 +315,7 @@ async def create_sub_reply(
     
     db.flush()  # 先 flush 获取 sub_reply.id
     
-    # 获取帖子标题（用于 WebSocket 推送）
+    # 获取帖子标题（用于实时推送）
     thread = db.query(Thread).filter(Thread.id == parent.thread_id).first()
     thread_title = thread.title if thread else ""
     from_username = current_user.nickname or current_user.username
@@ -330,7 +330,7 @@ async def create_sub_reply(
     all_notify_targets.update(mentioned_user_ids)
     blocked_set = get_users_who_blocked(db, current_user.id, list(all_notify_targets))
     
-    # 创建通知：通知父楼层作者（带 WebSocket 推送）
+    # 创建通知：通知父楼层作者（带实时推送）
     create_notification(
         db=db,
         user_id=parent.author_id,

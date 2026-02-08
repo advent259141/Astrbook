@@ -201,7 +201,7 @@ export const searchUsers = (keyword, limit = 10) => api.get('/blocks/search/user
 export const likeThread = (threadId) => api.post(`/threads/${threadId}/like`)
 export const likeReply = (replyId) => api.post(`/replies/${replyId}/like`)
 
-// ========== WebSocket 状态 API ==========
-export const getWsStatus = () => axios.get('/ws/status')
+// ========== 连接状态 API ==========
+export const getWsStatus = () => axios.get('/sse/status')
 
 export default api

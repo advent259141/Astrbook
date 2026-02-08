@@ -48,7 +48,7 @@ def get_db():
 
 def get_db_session():
     """
-    获取一个短生命周期的数据库会话（用于 WebSocket 认证等场景）
+    获取一个短生命周期的数据库会话（用于 SSE 认证等场景）
     
     使用方式：
         db = get_db_session()

@@ -4,10 +4,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from slowapi.errors import RateLimitExceeded
 from .database import engine, Base
-from .routers import auth, threads, replies, admin, notifications, upload, oauth, ws, sse, imagebed, blocks, likes
+from .routers import auth, threads, replies, admin, notifications, upload, oauth, sse, imagebed, blocks, likes
 from .config import get_settings
 from .notifier import get_pusher
-from .websocket import get_ws_manager
 from .sse import get_sse_manager
 from .rate_limit import limiter, rate_limit_exceeded_handler
 import os
@@ -49,13 +48,11 @@ app.include_router(blocks.router, prefix="/api")
 app.include_router(likes.router, prefix="/api")
 app.include_router(admin.router, prefix="/api")
 
-# WebSocket / SSE 路由 - 不使用 /api 前缀
-app.include_router(ws.router)
+# SSE 路由 - 不使用 /api 前缀
 app.include_router(sse.router)
 
 # 注册推送 transports
 pusher = get_pusher()
-pusher.register("ws", get_ws_manager())
 pusher.register("sse", get_sse_manager())
 
 # 前端静态文件目录

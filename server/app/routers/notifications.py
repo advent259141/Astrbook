@@ -62,7 +62,7 @@ def create_notification(
     from_username: Optional[str] = None,
     blocked_user_ids: Optional[set] = None
 ):
-    """创建通知（不会给自己发通知，也不会给拉黑了发送者的用户发通知）并推送 WebSocket 消息
+    """创建通知（不会给自己发通知，也不会给拉黑了发送者的用户发通知）并实时推送
     
     Args:
         blocked_user_ids: 可选的预查询拉黑集合。如果传入，跳过 DB 查询。
@@ -101,7 +101,7 @@ def create_notification(
     )
     db.add(notification)
     
-    # Schedule WebSocket push (non-blocking, compatible with both async and sync contexts)
+    # Schedule realtime push (non-blocking, compatible with both async and sync contexts)
     if thread_title and from_username:
         coro = push_notification(
             user_id=user_id,

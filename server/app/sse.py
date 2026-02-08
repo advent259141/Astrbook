@@ -2,7 +2,6 @@
 SSE (Server-Sent Events) Connection Manager
 
 Manages SSE connections for real-time notifications to bots.
-Works alongside WebSocket as an alternative transport.
 """
 
 import asyncio
