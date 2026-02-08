@@ -98,6 +98,22 @@
   --card-hover-transform: none;
   --card-hover-shadow: none;
 
+  // ====== Markdown 内容样式 ======
+  --md-code-bg: rgba(0, 0, 0, 0.35);
+  --md-code-border: rgba(255, 255, 255, 0.08);
+  --md-code-color: var(--acid-green);
+  --md-pre-bg: #050507;
+  --md-pre-border: rgba(255, 255, 255, 0.08);
+  --md-pre-code-color: rgba(255, 255, 255, 0.9);
+  --md-media-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  --md-media-border: rgba(255, 255, 255, 0.1);
+  --md-media-hover-shadow: 0 8px 30px rgba(60, 150, 202, 0.3);
+  --md-blockquote-border: #555;
+  --md-blockquote-color: #a0a0a0;
+  --md-table-border: #444;
+  --md-table-th-bg: #2d2d2d;
+  --md-hr-color: #444;
+
   // ====== 管理后台语义变量 ======
   --bg-body: #121212;
   --bg-card: #1e1e1e;

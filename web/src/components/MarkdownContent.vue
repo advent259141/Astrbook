@@ -140,18 +140,18 @@ const renderedContent = computed(() => {
   }
   
   code {
-    background: rgba(0, 0, 0, 0.35);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: var(--md-code-bg, rgba(0, 0, 0, 0.35));
+    border: 1px solid var(--md-code-border, rgba(255, 255, 255, 0.08));
     padding: 2px 6px;
     border-radius: 6px;
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
     font-size: 0.9em;
-    color: var(--acid-green);
+    color: var(--md-code-color, var(--acid-green));
   }
   
   pre {
-    background: #050507;
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: var(--md-pre-bg, #050507);
+    border: 1px solid var(--md-pre-border, rgba(255, 255, 255, 0.08));
     padding: 14px 16px;
     border-radius: 12px;
     overflow: auto;
@@ -159,18 +159,19 @@ const renderedContent = computed(() => {
     
     code {
       background: none;
+      border: none;
       padding: 0;
-      color: rgba(255, 255, 255, 0.9);
+      color: var(--md-pre-code-color, rgba(255, 255, 255, 0.9));
       display: block;
       line-height: 1.6;
     }
   }
   
   blockquote {
-    border-left: 4px solid #dcdfe6;
+    border-left: 4px solid var(--md-blockquote-border, #dcdfe6);
     padding-left: 16px;
     margin: 12px 0;
-    color: #909399;
+    color: var(--md-blockquote-color, #909399);
   }
   
   ul, ol {
@@ -191,14 +192,14 @@ const renderedContent = computed(() => {
     margin: 16px 0;
     display: block;
     object-fit: contain; // 保持图片比例
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: var(--md-media-shadow, 0 4px 20px rgba(0, 0, 0, 0.3));
+    border: 1px solid var(--md-media-border, rgba(255, 255, 255, 0.1));
     transition: transform 0.3s ease, box-shadow 0.3s ease;
     cursor: pointer;
     
     &:hover {
       transform: scale(1.02);
-      box-shadow: 0 8px 30px rgba(176, 38, 255, 0.3);
+      box-shadow: var(--md-media-hover-shadow, 0 8px 30px rgba(176, 38, 255, 0.3));
     }
   }
   
@@ -217,12 +218,12 @@ const renderedContent = computed(() => {
     border-radius: 12px;
     margin: 16px 0;
     display: block;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: var(--md-media-shadow, 0 4px 20px rgba(0, 0, 0, 0.3));
+    border: 1px solid var(--md-media-border, rgba(255, 255, 255, 0.1));
     background: #000;
     
     &:hover {
-      box-shadow: 0 8px 30px rgba(176, 38, 255, 0.3);
+      box-shadow: var(--md-media-hover-shadow, 0 8px 30px rgba(176, 38, 255, 0.3));
     }
   }
   
@@ -244,11 +245,11 @@ const renderedContent = computed(() => {
     border-radius: 12px;
     overflow: hidden;
     background: #000;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: var(--md-media-shadow, 0 4px 20px rgba(0, 0, 0, 0.3));
+    border: 1px solid var(--md-media-border, rgba(255, 255, 255, 0.1));
     
     &:hover {
-      box-shadow: 0 8px 30px rgba(176, 38, 255, 0.3);
+      box-shadow: var(--md-media-hover-shadow, 0 8px 30px rgba(176, 38, 255, 0.3));
     }
     
     .bilibili-iframe {
@@ -274,20 +275,20 @@ const renderedContent = computed(() => {
     margin: 12px 0;
     
     th, td {
-      border: 1px solid #dcdfe6;
+      border: 1px solid var(--md-table-border, #dcdfe6);
       padding: 8px 12px;
       text-align: left;
     }
     
     th {
-      background: #f5f7fa;
+      background: var(--md-table-th-bg, #f5f7fa);
       font-weight: 600;
     }
   }
   
   hr {
     border: none;
-    border-top: 1px solid #dcdfe6;
+    border-top: 1px solid var(--md-hr-color, #dcdfe6);
     margin: 16px 0;
   }
 }
