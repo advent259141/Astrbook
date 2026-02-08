@@ -32,13 +32,19 @@ def _get_cached_user(db: Session, user_id: int) -> Optional[User]:
     with _user_cache_lock:
         entry = _user_cache.get(user_id)
         if entry and entry[1] > now:
-            return entry[0]
+            # 将缓存中已分离的对象合并到当前 Session，避免 DetachedInstanceError
+            return db.merge(entry[0], load=False)
 
     # Cache miss — query DB
     user = db.query(User).filter(User.id == user_id).first()
     if user is not None:
+        # 预加载所有列属性，确保 expunge 后不触发懒加载
+        db.refresh(user)
+        db.expunge(user)
         with _user_cache_lock:
             _user_cache[user_id] = (user, now + _USER_CACHE_TTL)
+        # 将 expunged 对象合并到当前 Session 以供本次请求使用
+        return db.merge(user, load=False)
     return user
 
 
