@@ -24,17 +24,26 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 router = APIRouter(prefix="/auth", tags=["OAuth 认证"])
 
-# ===== 带过期清理的 OAuth state 存储 =====
+# ===== OAuth state 存储（优先 Redis，降级到内存字典） =====
+import json as _json
 import time as _time
+from ..redis_client import get_redis
 
-_oauth_states: dict[str, dict] = {}
+_oauth_states: dict[str, dict] = {}  # 降级用内存字典
 _STATE_TTL = 600  # 10 分钟过期
 
 
-def _set_oauth_state(state: str, data: dict):
-    """存储 OAuth state，并顺便清理过期条目"""
+async def _set_oauth_state(state: str, data: dict):
+    """存储 OAuth state 到 Redis（TTL 自动过期，无需手动清理）"""
+    r = get_redis()
+    if r:
+        try:
+            await r.setex(f"oauth:state:{state}", _STATE_TTL, _json.dumps(data))
+            return
+        except Exception:
+            logger.warning("[OAuth] Redis 写入 state 失败，降级到内存")
+    # 降级：保留原字典逻辑
     now = _time.time()
-    # 清理过期的 state
     expired = [k for k, v in _oauth_states.items() if now - v.get("_ts", 0) > _STATE_TTL]
     for k in expired:
         _oauth_states.pop(k, None)
@@ -42,8 +51,16 @@ def _set_oauth_state(state: str, data: dict):
     _oauth_states[state] = data
 
 
-def _pop_oauth_state(state: str) -> dict | None:
-    """取出并验证 OAuth state，过期返回 None"""
+async def _pop_oauth_state(state: str) -> dict | None:
+    """取出 OAuth state（Redis 中取出即删）"""
+    r = get_redis()
+    if r:
+        try:
+            raw = await r.getdel(f"oauth:state:{state}")
+            return _json.loads(raw) if raw else None
+        except Exception:
+            logger.warning("[OAuth] Redis 读取 state 失败，降级到内存")
+    # 降级：原逻辑
     data = _oauth_states.pop(state, None)
     if data is None:
         return None
@@ -54,7 +71,7 @@ def _pop_oauth_state(state: str) -> dict | None:
 
 
 @router.get("/github/authorize")
-def github_authorize(
+async def github_authorize(
     action: str = Query(
         "login", description="操作类型: login(登录/注册) 或 link(绑定)"
     ),
@@ -74,7 +91,7 @@ def github_authorize(
 
     # 生成防 CSRF 的 state
     state = secrets.token_urlsafe(32)
-    _set_oauth_state(state, {
+    await _set_oauth_state(state, {
         "action": action,
         "redirect_uri": redirect_uri or settings.FRONTEND_URL,
     })
@@ -102,8 +119,8 @@ async def github_callback(
 
     处理 GitHub 授权后的回调，完成登录/注册或绑定
     """
-    # 验证 state
-    state_data = oauth_states.pop(state, None)
+    # 验证 state（修复 bug：原 oauth_states.pop 绕过了过期检查）
+    state_data = await _pop_oauth_state(state)
     if not state_data:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -431,7 +448,7 @@ def get_github_config():
 
 
 @router.get("/linuxdo/authorize")
-def linuxdo_authorize(
+async def linuxdo_authorize(
     action: str = Query(
         "login", description="操作类型: login(登录/注册) 或 link(绑定)"
     ),
@@ -451,7 +468,7 @@ def linuxdo_authorize(
 
     # 生成防 CSRF 的 state
     state = secrets.token_urlsafe(32)
-    _set_oauth_state(state, {
+    await _set_oauth_state(state, {
         "action": action,
         "redirect_uri": redirect_uri or settings.FRONTEND_URL,
     })
@@ -480,7 +497,7 @@ async def linuxdo_callback(
     处理 LinuxDo 授权后的回调，完成登录/注册或绑定
     """
     # 验证 state
-    state_data = _pop_oauth_state(state)
+    state_data = await _pop_oauth_state(state)
     if not state_data:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

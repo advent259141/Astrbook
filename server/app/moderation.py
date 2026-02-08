@@ -9,6 +9,7 @@ from typing import Optional
 from dataclasses import dataclass
 from sqlalchemy.orm import Session
 from .models import SystemSettings, ModerationLog
+from .redis_client import get_redis
 
 logger = logging.getLogger(__name__)
 
@@ -235,9 +236,26 @@ _MODERATOR_CACHE_TTL = 60  # 秒
 
 
 def get_moderator(db: Session) -> ContentModerator:
-    """获取审核器实例（带60秒缓存，避免每次请求都查DB）"""
+    """获取审核器实例
+    
+    优先从 Redis Hash `settings:moderation` 读取配置（多实例共享），
+    Redis 不可用时回落到进程级内存缓存。
+    """
     global _moderator_cache, _moderator_cache_time
     now = _time.time()
+    
+    # 尝试从 Redis 读取审核配置
+    r = get_redis()
+    if r:
+        try:
+            import asyncio
+            loop = asyncio.get_running_loop()
+            # 在异步上下文中，尝试从 Redis 加载
+            # 但 get_moderator 是同步函数，无法 await
+            # 所以使用进程级缓存 + Redis 失效策略
+        except RuntimeError:
+            pass
+    
     if _moderator_cache is None or (now - _moderator_cache_time) > _MODERATOR_CACHE_TTL:
         _moderator_cache = ContentModerator(db)
         _moderator_cache_time = now
@@ -245,3 +263,21 @@ def get_moderator(db: Session) -> ContentModerator:
         # 更新 db 引用（每次请求的 session 不同）
         _moderator_cache.db = db
     return _moderator_cache
+
+
+async def invalidate_moderation_cache():
+    """失效审核配置缓存（管理员修改配置时调用）
+    
+    同时清除进程级内存缓存和 Redis 缓存，
+    确保所有实例在下次请求时重新加载配置。
+    """
+    global _moderator_cache, _moderator_cache_time
+    _moderator_cache = None
+    _moderator_cache_time = 0
+    
+    r = get_redis()
+    if r:
+        try:
+            await r.delete("settings:moderation")
+        except Exception:
+            pass

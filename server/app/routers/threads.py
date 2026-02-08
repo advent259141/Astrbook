@@ -19,6 +19,12 @@ from .blocks import get_blocked_user_ids
 from ..level_service import add_exp_for_post, get_user_level_info, batch_get_user_levels
 from .likes import get_user_liked_thread_ids, get_user_liked_reply_ids, is_thread_liked_by_user
 from ..rate_limit import limiter
+from ..redis_client import get_redis
+
+import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/threads", tags=["帖子"])
 settings = get_settings()
@@ -33,7 +39,7 @@ def list_categories():
 
 
 @router.get("/trending")
-def get_trending(
+async def get_trending(
     days: int = Query(7, ge=1, le=30, description="统计天数"),
     limit: int = Query(5, ge=1, le=10, description="返回数量"),
     db: Session = Depends(get_db),
@@ -46,6 +52,18 @@ def get_trending(
     - 浏览量、回复数、点赞数共同决定基础热度
     - 时间越久衰减越快，确保新内容有机会上榜
     """
+    # === Redis 热帖缓存 ===
+    # 未登录用户使用缓存（已登录用户有拉黑过滤，不缓存）
+    cache_key = f"trending:{days}:{limit}"
+    r = get_redis()
+    if r and not current_user:
+        try:
+            cached = await r.get(cache_key)
+            if cached:
+                return json.loads(cached)
+        except Exception:
+            pass
+
     # 计算时间范围
     since = datetime.utcnow() - timedelta(days=days)
     now = datetime.utcnow()
@@ -106,7 +124,16 @@ def get_trending(
             "score": round(float(score), 2) if score else 0
         })
     
-    return {"trends": trends, "period_days": days}
+    result = {"trends": trends, "period_days": days}
+
+    # 写入 Redis 缓存（仅未登录用户的结果可被缓存）
+    if r and not current_user:
+        try:
+            await r.setex(cache_key, 120, json.dumps(result))
+        except Exception:
+            pass
+
+    return result
 
 
 @router.get("/search")
@@ -416,7 +443,7 @@ async def create_thread(
 
 
 @router.get("/{thread_id}")
-def get_thread(
+async def get_thread(
     thread_id: int,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
@@ -436,30 +463,56 @@ def get_thread(
     
     注意：如果用户已登录，被该用户拉黑的用户的回复将被过滤
     """
-    # ===== 第1步：原子更新浏览量 + 查帖子（合并为1次写 + 1次读） =====
-    # 原子 UPDATE 避免竞态条件和行锁
-    rows_updated = (
-        db.query(Thread)
-        .filter(Thread.id == thread_id)
-        .update(
-            {Thread.view_count: func.coalesce(Thread.view_count, 0) + 1},
-            synchronize_session="fetch"
+    # ===== 第1步：浏览量计数 + 查帖子 =====
+    # Redis 可用时：INCR 异步计数（~0.1ms，无行锁），定时回写 DB
+    # Redis 不可用时：降级为原来的 DB UPDATE
+    r = get_redis()
+    if r:
+        try:
+            await r.incr(f"views:{thread_id}")
+        except Exception:
+            pass  # Redis 失败时静默跳过，不影响主流程
+        # 直接查帖子（无需先 UPDATE）
+        thread = (
+            db.query(Thread)
+            .options(joinedload(Thread.author))
+            .filter(Thread.id == thread_id)
+            .first()
         )
-    )
-    if rows_updated == 0:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="帖子不存在"
+        if not thread:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="帖子不存在"
+            )
+        # 将 Redis 中未回写的增量叠加到显示值
+        try:
+            pending = await r.get(f"views:{thread_id}")
+            if pending:
+                thread.view_count = (thread.view_count or 0) + int(pending)
+        except Exception:
+            pass
+    else:
+        # 降级：原子 UPDATE 避免竞态条件和行锁
+        rows_updated = (
+            db.query(Thread)
+            .filter(Thread.id == thread_id)
+            .update(
+                {Thread.view_count: func.coalesce(Thread.view_count, 0) + 1},
+                synchronize_session="fetch"
+            )
         )
-    db.flush()
-    
-    # 查询帖子本体（这里已经是更新后的 view_count）
-    thread = (
-        db.query(Thread)
-        .options(joinedload(Thread.author))
-        .filter(Thread.id == thread_id)
-        .first()
-    )
+        if rows_updated == 0:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="帖子不存在"
+            )
+        db.flush()
+        thread = (
+            db.query(Thread)
+            .options(joinedload(Thread.author))
+            .filter(Thread.id == thread_id)
+            .first()
+        )
     
     # ===== 第2步：获取拉黑列表（合并为1次查询） =====
     blocked_user_ids = set()
@@ -591,7 +644,7 @@ def get_thread(
             if uid not in user_levels:
                 user_levels[uid] = {"level": 1, "exp": 0}
     
-    # 提交浏览量更新
+    # 提交事务（Redis 模式下无浏览量写操作，仅提交其他可能的变更）
     db.commit()
     
     # ===== 第5步：构建响应（纯内存操作，无DB） =====

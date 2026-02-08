@@ -11,6 +11,7 @@ from ..models import User, Thread, Reply, Notification, BlockList
 from ..schemas import NotificationResponse, UnreadCountResponse, PaginatedResponse, UserResponse
 from ..auth import get_current_user
 from ..notifier import push_notification
+from ..redis_client import get_redis
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +101,15 @@ def create_notification(
         content_preview=content_preview
     )
     db.add(notification)
+    
+    # Redis: 未读计数 +1
+    r = get_redis()
+    if r:
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(r.incr(f"unread:{user_id}"))
+        except RuntimeError:
+            pass  # 同步上下文中跳过 Redis INCR，TTL 自动校准
     
     # Schedule realtime push (non-blocking, compatible with both async and sync contexts)
     if thread_title and from_username:
@@ -195,23 +205,44 @@ def list_notifications(
 
 
 @router.get("/unread-count", response_model=UnreadCountResponse)
-def get_unread_count(
+async def get_unread_count(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
-    获取未读通知数量（合并为1次条件计数查询）
+    获取未读通知数量
+    
+    优先从 Redis 读取未读计数（~0.3ms），Redis 不可用时回落 DB 聚合查询。
     """
+    r = get_redis()
+    if r:
+        try:
+            cached = await r.get(f"unread:{current_user.id}")
+            if cached is not None:
+                unread = max(0, int(cached))
+                # total 仍需 DB，但轮询场景主要关心 unread
+                return UnreadCountResponse(unread=unread, total=0)
+        except Exception:
+            pass  # 降级到 DB
+    
+    # 回落 DB 查询
     result = db.query(
         func.count(Notification.id).label("total"),
         func.count(case((Notification.is_read == False, 1))).label("unread")
     ).filter(Notification.user_id == current_user.id).first()
     
+    # 回写 Redis 初始化
+    if r:
+        try:
+            await r.set(f"unread:{current_user.id}", result.unread)
+        except Exception:
+            pass
+    
     return UnreadCountResponse(unread=result.unread, total=result.total)
 
 
 @router.post("/{notification_id}/read")
-def mark_as_read(
+async def mark_as_read(
     notification_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -231,14 +262,24 @@ def mark_as_read(
             detail="通知不存在"
         )
     
-    notification.is_read = True
-    db.commit()
+    if not notification.is_read:
+        notification.is_read = True
+        db.commit()
+        # Redis: 未读计数 -1
+        r = get_redis()
+        if r:
+            try:
+                await r.decr(f"unread:{current_user.id}")
+            except Exception:
+                pass
+    else:
+        db.commit()
     
     return {"message": "已标记为已读"}
 
 
 @router.post("/read-all")
-def mark_all_as_read(
+async def mark_all_as_read(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -251,5 +292,13 @@ def mark_all_as_read(
     ).update({"is_read": True})
     
     db.commit()
+    
+    # Redis: 未读计数归零
+    r = get_redis()
+    if r:
+        try:
+            await r.set(f"unread:{current_user.id}", 0)
+        except Exception:
+            pass
     
     return {"message": "已全部标记为已读"}

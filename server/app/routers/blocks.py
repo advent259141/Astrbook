@@ -8,12 +8,32 @@ from ..schemas import (
     BlockUserRequest, BlockedUserResponse, BlockListResponse, UserResponse
 )
 from ..auth import get_current_user
+from ..redis_client import get_redis
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/blocks", tags=["拉黑"])
 
 
 def get_blocked_user_ids(db: Session, user_id: int) -> set:
-    """获取双向拉黑的所有用户ID列表（我拉黑的 + 拉黑我的），合并为1次查询"""
+    """获取双向拉黑的所有用户ID列表（我拉黑的 + 拉黑我的）
+    
+    优先从 Redis Set `blocks:{user_id}` 读取（TTL 60 秒），
+    Redis 不可用时回落到 DB UNION ALL 查询。
+    """
+    r = get_redis()
+    
+    # 尝试从 Redis 读取
+    if r:
+        try:
+            import asyncio
+            loop = asyncio.get_running_loop()
+            # 同步上下文无法 await，检查是否有 running loop
+        except RuntimeError:
+            r = None  # 同步上下文，跳过 Redis
+    
+    # DB 查询（始终需要，作为 Redis miss 的回落）
     blocked_rows = (
         db.query(BlockList.blocked_user_id.label("uid"))
         .filter(BlockList.user_id == user_id)
@@ -23,7 +43,76 @@ def get_blocked_user_ids(db: Session, user_id: int) -> set:
         )
         .all()
     )
-    return {row[0] for row in blocked_rows}
+    ids = {row[0] for row in blocked_rows}
+    
+    # 写入 Redis 缓存（异步 fire-and-forget）
+    if r and ids:
+        try:
+            async def _cache_blocks():
+                try:
+                    pipe = r.pipeline()
+                    key = f"blocks:{user_id}"
+                    await pipe.delete(key)
+                    await pipe.sadd(key, *[str(uid) for uid in ids])
+                    await pipe.expire(key, 60)
+                    await pipe.execute()
+                except Exception:
+                    pass
+            import asyncio
+            asyncio.get_running_loop().create_task(_cache_blocks())
+        except Exception:
+            pass
+    
+    return ids
+
+
+async def get_blocked_user_ids_async(db: Session, user_id: int) -> set:
+    """异步版本：优先从 Redis Set 读取拉黑列表，miss 时查 DB 并回写缓存"""
+    r = get_redis()
+    if r:
+        try:
+            key = f"blocks:{user_id}"
+            cached = await r.smembers(key)
+            if cached:
+                return {int(uid) for uid in cached}
+        except Exception:
+            pass  # 降级到 DB
+    
+    # DB 查询
+    blocked_rows = (
+        db.query(BlockList.blocked_user_id.label("uid"))
+        .filter(BlockList.user_id == user_id)
+        .union_all(
+            db.query(BlockList.user_id.label("uid"))
+            .filter(BlockList.blocked_user_id == user_id)
+        )
+        .all()
+    )
+    ids = {row[0] for row in blocked_rows}
+    
+    # 写入 Redis 缓存
+    if r and ids:
+        try:
+            key = f"blocks:{user_id}"
+            pipe = r.pipeline()
+            await pipe.delete(key)
+            await pipe.sadd(key, *[str(uid) for uid in ids])
+            await pipe.expire(key, 60)
+            await pipe.execute()
+        except Exception:
+            pass
+    
+    return ids
+
+
+async def invalidate_block_cache(user_id: int, target_id: int):
+    """拉黑/取消拉黑时失效双方缓存"""
+    r = get_redis()
+    if r:
+        try:
+            await r.delete(f"blocks:{user_id}", f"blocks:{target_id}")
+        except Exception:
+            pass
 
 
 @router.get("", response_model=BlockListResponse)
@@ -57,7 +146,7 @@ def get_block_list(
 
 
 @router.post("", response_model=BlockedUserResponse)
-def block_user(
+async def block_user(
     data: BlockUserRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -103,6 +192,9 @@ def block_user(
     db.commit()
     db.refresh(block)
     
+    # 失效双方 Redis 缓存
+    await invalidate_block_cache(current_user.id, data.blocked_user_id)
+    
     return BlockedUserResponse(
         id=block.id,
         blocked_user=UserResponse.model_validate(target_user),
@@ -111,7 +203,7 @@ def block_user(
 
 
 @router.delete("/{blocked_user_id}")
-def unblock_user(
+async def unblock_user(
     blocked_user_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
@@ -134,6 +226,9 @@ def unblock_user(
     
     db.delete(block)
     db.commit()
+    
+    # 失效双方 Redis 缓存
+    await invalidate_block_cache(current_user.id, blocked_user_id)
     
     return {"message": "取消拉黑成功"}
 

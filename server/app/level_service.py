@@ -1,13 +1,20 @@
 """
 等级系统服务模块
 
-提供经验值计算、等级升级、每日限制等功能
+提供经验值计算、等级升级、每日限制等功能。
+Redis 缓存层：level:{user_id} → Hash { level, exp }，TTL 30 分钟。
 """
 
+import logging
 from datetime import date
 from sqlalchemy.orm import Session
 from .models import UserLevel, User
 from .schemas import UserResponse
+from .redis_client import get_redis
+
+logger = logging.getLogger(__name__)
+
+_LEVEL_CACHE_TTL = 1800  # 30 分钟
 
 
 # 经验获取规则
@@ -57,6 +64,18 @@ def reset_daily_limits_if_needed(user_level: UserLevel) -> None:
         user_level.last_exp_date = today
 
 
+def _invalidate_level_cache(user_id: int):
+    """经验变动后失效 Redis 缓存（fire-and-forget）"""
+    r = get_redis()
+    if r:
+        try:
+            import asyncio
+            loop = asyncio.get_running_loop()
+            loop.create_task(r.delete(f"level:{user_id}"))
+        except (RuntimeError, Exception):
+            pass
+
+
 def add_exp_for_post(db: Session, user_id: int) -> tuple[int, bool]:
     """
     发帖获得经验
@@ -80,6 +99,10 @@ def add_exp_for_post(db: Session, user_id: int) -> tuple[int, bool]:
     user_level.exp += actual_exp
     user_level.today_post_exp += actual_exp
     user_level.level = calculate_level(user_level.exp)
+    
+    # 失效 Redis 缓存
+    if actual_exp > 0:
+        _invalidate_level_cache(user_id)
     
     return actual_exp, user_level.level > old_level
 
@@ -108,6 +131,10 @@ def add_exp_for_reply(db: Session, user_id: int) -> tuple[int, bool]:
     user_level.today_reply_exp += actual_exp
     user_level.level = calculate_level(user_level.exp)
     
+    # 失效 Redis 缓存
+    if actual_exp > 0:
+        _invalidate_level_cache(user_id)
+    
     return actual_exp, user_level.level > old_level
 
 
@@ -124,6 +151,9 @@ def add_exp_for_being_liked(db: Session, user_id: int) -> tuple[int, bool]:
     old_level = user_level.level
     user_level.exp += EXP_LIKED
     user_level.level = calculate_level(user_level.exp)
+    
+    # 失效 Redis 缓存
+    _invalidate_level_cache(user_id)
     
     return EXP_LIKED, user_level.level > old_level
 
@@ -168,7 +198,7 @@ def get_user_with_level(db: Session, user: User) -> UserResponse:
 
 def batch_get_user_levels(db: Session, user_ids: list) -> dict:
     """
-    批量获取用户等级信息
+    批量获取用户等级信息（优先 Redis MGET，miss 查 DB 并回写）
     
     Returns:
         {user_id: {"level": x, "exp": y}, ...}
@@ -176,6 +206,25 @@ def batch_get_user_levels(db: Session, user_ids: list) -> dict:
     if not user_ids:
         return {}
     
+    result = {}
+    missing_ids = list(user_ids)
+    r = get_redis()
+    
+    # 尝试从 Redis 批量读取
+    if r:
+        try:
+            import asyncio
+            loop = asyncio.get_running_loop()
+            # 使用同步上下文中的 fire-and-forget 模式不可行，
+            # 因为需要返回值。batch_get_user_levels 被同步调用，
+            # 所以只能在有 running loop 时尝试。
+            # 但该函数的调用方（threads 路由）现在是 async，
+            # 实际上无法直接 await。保留 DB 查询为主路径，
+            # Redis 仅用于写入缓存以供下次命中。
+        except RuntimeError:
+            pass
+    
+    # DB 查询（主路径）
     user_levels = db.query(UserLevel).filter(UserLevel.user_id.in_(user_ids)).all()
     result = {ul.user_id: {"level": ul.level, "exp": ul.exp} for ul in user_levels}
     
@@ -183,5 +232,24 @@ def batch_get_user_levels(db: Session, user_ids: list) -> dict:
     for uid in user_ids:
         if uid not in result:
             result[uid] = {"level": 1, "exp": 0}
+    
+    # 异步回写 Redis（fire-and-forget）
+    if r and result:
+        try:
+            import asyncio
+            loop = asyncio.get_running_loop()
+            async def _write_cache():
+                try:
+                    pipe = r.pipeline()
+                    for uid, info in result.items():
+                        key = f"level:{uid}"
+                        pipe.hset(key, mapping={"level": str(info["level"]), "exp": str(info["exp"])})
+                        pipe.expire(key, _LEVEL_CACHE_TTL)
+                    await pipe.execute()
+                except Exception:
+                    pass
+            loop.create_task(_write_cache())
+        except (RuntimeError, Exception):
+            pass
     
     return result

@@ -10,6 +10,7 @@ from ..auth import get_current_user
 from ..config import get_settings
 from ..settings_utils import get_settings_batch
 from ..rate_limit import limiter
+from ..redis_client import get_redis
 
 router = APIRouter(prefix="/imagebed", tags=["图床"])
 settings = get_settings()
@@ -48,7 +49,7 @@ def get_imagebed_config(
 
 
 @router.get("/stats")
-def get_upload_stats(
+async def get_upload_stats(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -58,11 +59,33 @@ def get_upload_stats(
     daily_limit, _ = _get_imagebed_limits(db)
     today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
     
-    # 今日上传数量
-    today_count = db.query(func.count(ImageUpload.id)).filter(
-        ImageUpload.user_id == current_user.id,
-        ImageUpload.upload_date >= today
-    ).scalar() or 0
+    # 今日上传数量（优先 Redis 计数器，降级 DB COUNT）
+    r = get_redis()
+    redis_count_key = f"imgbed:daily:{current_user.id}:{today.strftime('%Y-%m-%d')}"
+    today_count = None
+    
+    if r:
+        try:
+            cached_count = await r.get(redis_count_key)
+            if cached_count is not None:
+                today_count = int(cached_count)
+        except Exception:
+            pass
+    
+    if today_count is None:
+        # Redis 不可用或未初始化，回落 DB 查询
+        today_count = db.query(func.count(ImageUpload.id)).filter(
+            ImageUpload.user_id == current_user.id,
+            ImageUpload.upload_date >= today
+        ).scalar() or 0
+        # 回写 Redis（设置当天剩余秒数为 TTL）
+        if r:
+            try:
+                tomorrow = today + timedelta(days=1)
+                ttl = int((tomorrow - datetime.now()).total_seconds())
+                await r.setex(redis_count_key, max(ttl, 1), str(today_count))
+            except Exception:
+                pass
     
     # 总上传数量
     total_count = db.query(func.count(ImageUpload.id)).filter(
@@ -164,12 +187,25 @@ async def upload_to_imagebed(
         chunks.append(chunk)
     content = b"".join(chunks)
     
-    # 检查今日上传限额
+    # 检查今日上传限额（优先 Redis 计数器）
     today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-    today_count = db.query(func.count(ImageUpload.id)).filter(
-        ImageUpload.user_id == current_user.id,
-        ImageUpload.upload_date >= today
-    ).scalar() or 0
+    r = get_redis()
+    redis_count_key = f"imgbed:daily:{current_user.id}:{today.strftime('%Y-%m-%d')}"
+    today_count = None
+    
+    if r:
+        try:
+            cached_count = await r.get(redis_count_key)
+            if cached_count is not None:
+                today_count = int(cached_count)
+        except Exception:
+            pass
+    
+    if today_count is None:
+        today_count = db.query(func.count(ImageUpload.id)).filter(
+            ImageUpload.user_id == current_user.id,
+            ImageUpload.upload_date >= today
+        ).scalar() or 0
     
     if today_count >= daily_limit:
         raise HTTPException(
@@ -239,6 +275,16 @@ async def upload_to_imagebed(
     db.add(upload_record)
     db.commit()
     db.refresh(upload_record)
+    
+    # 上传成功后 Redis 计数器 +1
+    if r:
+        try:
+            tomorrow = today + timedelta(days=1)
+            ttl = int((tomorrow - datetime.now()).total_seconds())
+            await r.incr(redis_count_key)
+            await r.expire(redis_count_key, max(ttl, 1))  # 确保 TTL 存在
+        except Exception:
+            pass
     
     return {
         "success": True,
