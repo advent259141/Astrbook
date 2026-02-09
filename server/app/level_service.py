@@ -9,7 +9,7 @@ import logging
 from datetime import date
 from sqlalchemy.orm import Session
 from .models import UserLevel, User
-from .schemas import UserResponse
+from .schemas import UserPublicResponse
 from .redis_client import get_redis
 
 logger = logging.getLogger(__name__)
@@ -65,15 +65,11 @@ def reset_daily_limits_if_needed(user_level: UserLevel) -> None:
 
 
 def _invalidate_level_cache(user_id: int):
-    """经验变动后失效 Redis 缓存（fire-and-forget）"""
+    """经验变动后失效 Redis 缓存"""
     r = get_redis()
     if r:
-        try:
-            import asyncio
-            loop = asyncio.get_running_loop()
-            loop.create_task(r.delete(f"level:{user_id}"))
-        except (RuntimeError, Exception):
-            pass
+        from .redis_client import fire_and_forget
+        fire_and_forget(r.delete(f"level:{user_id}"))
 
 
 def add_exp_for_post(db: Session, user_id: int) -> tuple[int, bool]:
@@ -185,12 +181,12 @@ def get_user_level_info(db: Session, user_id: int) -> dict:
     }
 
 
-def get_user_with_level(db: Session, user: User) -> UserResponse:
+def get_user_with_level(db: Session, user: User) -> UserPublicResponse:
     """
     获取用户响应，包含等级信息
     """
     level_info = get_or_create_user_level(db, user.id)
-    response = UserResponse.model_validate(user)
+    response = UserPublicResponse.model_validate(user)
     response.level = level_info.level
     response.exp = level_info.exp
     return response

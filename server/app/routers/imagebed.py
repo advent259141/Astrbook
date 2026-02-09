@@ -3,6 +3,9 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from datetime import datetime, timedelta
 import httpx
+import logging
+
+logger = logging.getLogger(__name__)
 
 from ..database import get_db
 from ..models import User, ImageUpload, SystemSettings
@@ -215,7 +218,9 @@ async def upload_to_imagebed(
     
     # 调用图床 API 上传
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        from ..moderation import get_http_client
+        client = get_http_client(timeout_override=60.0)
+        if True:
             # 准备上传请求
             upload_url = f"{settings.IMGBED_API_URL.rstrip('/')}/upload"
             headers = {
@@ -336,7 +341,9 @@ async def delete_image(
                     file_path = url.split('/')[-1]
             
             # 调用图床删除 API
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            from ..moderation import get_http_client
+            client = get_http_client()
+            if True:
                 delete_url = f"{base_url}/api/manage/delete/{file_path}"
                 headers = {
                     "Authorization": f"Bearer {settings.IMGBED_API_TOKEN}"
@@ -348,7 +355,7 @@ async def delete_image(
                     imgbed_deleted = result.get("success", False)
         except Exception as e:
             # 图床删除失败不影响本地记录删除
-            print(f"图床删除失败: {e}")
+            logger.warning(f"图床删除失败: {e}")
     
     # 删除本地记录
     db.delete(record)

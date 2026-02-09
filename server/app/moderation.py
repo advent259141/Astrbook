@@ -31,6 +31,18 @@ def _get_http_client() -> httpx.AsyncClient:
         _http_client = httpx.AsyncClient(timeout=30.0)
     return _http_client
 
+
+def get_http_client(timeout_override: Optional[float] = None) -> httpx.AsyncClient:
+    """公共接口：获取全局 httpx 客户端（P2 #17: 各路由复用，消除重复 TCP 握手）
+    
+    如需不同超时，传 timeout_override 创建独立客户端（仍会被全局引用复用）。
+    默认使用 30s 超时的全局客户端。
+    """
+    if timeout_override and timeout_override != 30.0:
+        # 特殊超时需求（如图床上传 60s）使用独立客户端
+        return httpx.AsyncClient(timeout=timeout_override)
+    return _get_http_client()
+
 # 默认审核 Prompt
 DEFAULT_MODERATION_PROMPT = """你是内容安全审核员。请逐条判断以下内容是否存在严重违规。
 
@@ -271,40 +283,44 @@ async def fetch_available_models(api_base: str, api_key: str) -> list[str]:
     return models
 
 
-# ===== 审核器缓存（60秒TTL） =====
-_moderator_cache: Optional[ContentModerator] = None
-_moderator_cache_time: float = 0
+# ===== 审核器配置缓存（60秒TTL） =====
+# P2 #13: 只缓存配置字典，不缓存 ContentModerator 实例（避免 Session 交叉污染）
+_moderator_config_cache: Optional[dict] = None
+_moderator_config_cache_time: float = 0
 _MODERATOR_CACHE_TTL = 60  # 秒
 
 
 def get_moderator(db: Session) -> ContentModerator:
     """获取审核器实例
     
-    优先从 Redis Hash `settings:moderation` 读取配置（多实例共享），
-    Redis 不可用时回落到进程级内存缓存。
+    P2 #13: 只缓存配置字典（线程安全），每次请求创建新的 ContentModerator 实例。
+    避免全局缓存实例导致并发请求的 Session 交叉污染。
     """
-    global _moderator_cache, _moderator_cache_time
+    global _moderator_config_cache, _moderator_config_cache_time
     now = _time.time()
     
-    # 尝试从 Redis 读取审核配置
-    r = get_redis()
-    if r:
-        try:
-            import asyncio
-            loop = asyncio.get_running_loop()
-            # 在异步上下文中，尝试从 Redis 加载
-            # 但 get_moderator 是同步函数，无法 await
-            # 所以使用进程级缓存 + Redis 失效策略
-        except RuntimeError:
-            pass
+    if _moderator_config_cache is None or (now - _moderator_config_cache_time) > _MODERATOR_CACHE_TTL:
+        # 从 DB 加载配置并缓存为字典
+        moderator = ContentModerator(db)
+        _moderator_config_cache = {
+            "enabled": moderator.enabled,
+            "api_base": moderator.api_base,
+            "api_key": moderator.api_key,
+            "model": moderator.model,
+            "prompt": moderator.prompt,
+        }
+        _moderator_config_cache_time = now
+        return moderator
     
-    if _moderator_cache is None or (now - _moderator_cache_time) > _MODERATOR_CACHE_TTL:
-        _moderator_cache = ContentModerator(db)
-        _moderator_cache_time = now
-    else:
-        # 更新 db 引用（每次请求的 session 不同）
-        _moderator_cache.db = db
-    return _moderator_cache
+    # 用缓存的配置创建新实例（不触发 DB 查询）
+    moderator = ContentModerator.__new__(ContentModerator)
+    moderator.db = db
+    moderator.enabled = _moderator_config_cache["enabled"]
+    moderator.api_base = _moderator_config_cache["api_base"]
+    moderator.api_key = _moderator_config_cache["api_key"]
+    moderator.model = _moderator_config_cache["model"]
+    moderator.prompt = _moderator_config_cache["prompt"]
+    return moderator
 
 
 async def invalidate_moderation_cache():
@@ -313,9 +329,9 @@ async def invalidate_moderation_cache():
     同时清除进程级内存缓存和 Redis 缓存，
     确保所有实例在下次请求时重新加载配置。
     """
-    global _moderator_cache, _moderator_cache_time
-    _moderator_cache = None
-    _moderator_cache_time = 0
+    global _moderator_config_cache, _moderator_config_cache_time
+    _moderator_config_cache = None
+    _moderator_config_cache_time = 0
     
     r = get_redis()
     if r:
@@ -499,11 +515,8 @@ def _delete_thread_and_notify(db: Session, thread: Thread, reason: str):
     # Redis: 未读计数 +1
     r = get_redis()
     if r:
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(r.incr(f"unread:{author_id}"))
-        except RuntimeError:
-            pass
+        from .redis_client import fire_and_forget
+        fire_and_forget(r.incr(f"unread:{author_id}"))
     
     # 获取所有回复ID
     reply_ids = [
@@ -571,11 +584,8 @@ def _delete_reply_and_notify(db: Session, reply: Reply, reason: str):
     # Redis: 未读计数 +1
     r = get_redis()
     if r:
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(r.incr(f"unread:{author_id}"))
-        except RuntimeError:
-            pass
+        from .redis_client import fire_and_forget
+        fire_and_forget(r.incr(f"unread:{author_id}"))
     
     if not is_sub_reply:
         # 主楼层：删除其下所有楼中楼

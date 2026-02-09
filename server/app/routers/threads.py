@@ -1,11 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from fastapi.responses import PlainTextResponse
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, defer
 from sqlalchemy import func, and_, or_, literal_column, literal, case, union_all, extract, text
 from typing import Literal, Optional
 from datetime import datetime, timedelta
 from ..database import get_db
-from ..models import User, Thread, Reply, Notification, BlockList, Like, UserLevel
+from ..models import User, Thread, Reply, Notification, Like, UserLevel
 from ..schemas import (
     ThreadCreate, ThreadListItem, ThreadDetail,
     ReplyResponse, SubReplyResponse, PaginatedResponse, ThreadWithReplies,
@@ -15,7 +15,7 @@ from ..auth import get_current_user, get_optional_user
 from ..config import get_settings
 from ..serializers import LLMSerializer
 from ..moderation import get_moderator
-from .blocks import get_blocked_user_ids
+from .blocks import get_blocked_user_ids, get_blocked_user_ids_async
 from ..level_service import add_exp_for_post, get_user_level_info, batch_get_user_levels
 from .likes import get_user_liked_thread_ids, get_user_liked_reply_ids, is_thread_liked_by_user
 from ..rate_limit import limiter
@@ -87,7 +87,7 @@ async def get_trending(
     
     # 拉黑过滤：排除被拉黑用户发的帖子
     if current_user:
-        blocked_user_ids = get_blocked_user_ids(db, current_user.id)
+        blocked_user_ids = await get_blocked_user_ids_async(db, current_user.id)
         if blocked_user_ids:
             query = query.filter(~Thread.author_id.in_(blocked_user_ids))
     
@@ -184,7 +184,7 @@ async def search_threads(
     
     # 拉黑过滤：排除被拉黑用户发的帖子
     if current_user:
-        blocked_user_ids = get_blocked_user_ids(db, current_user.id)
+        blocked_user_ids = await get_blocked_user_ids_async(db, current_user.id)
         if blocked_user_ids:
             query = query.filter(~Thread.author_id.in_(blocked_user_ids))
             count_query = count_query.filter(~Thread.author_id.in_(blocked_user_ids))
@@ -338,41 +338,66 @@ async def list_threads(
         except Exception as e:
             logger.warning(f"Redis read failed for {cache_key}: {e}")
     
-    # 构建查询
-    query = db.query(Thread).options(joinedload(Thread.author))
-    count_query = db.query(func.count(Thread.id))
+    # 构建查询（P1 #12: 使用窗口函数合并数据查询和 COUNT 为一次 DB 往返）
+    base_filter = []
     
     # 拉黑过滤：排除被拉黑用户发的帖子
     if current_user:
-        blocked_user_ids = get_blocked_user_ids(db, current_user.id)
+        blocked_user_ids = await get_blocked_user_ids_async(db, current_user.id)
         if blocked_user_ids:
-            query = query.filter(~Thread.author_id.in_(blocked_user_ids))
-            count_query = count_query.filter(~Thread.author_id.in_(blocked_user_ids))
+            base_filter.append(~Thread.author_id.in_(blocked_user_ids))
     
     # 分类筛选
     if category and category in THREAD_CATEGORIES:
-        query = query.filter(Thread.category == category)
-        count_query = count_query.filter(Thread.category == category)
-    
-    # 统计总数
-    total = count_query.scalar()
-    total_pages = (total + page_size - 1) // page_size if total > 0 else 1
+        base_filter.append(Thread.category == category)
     
     # 排序
     if sort == "newest":
-        query = query.order_by(Thread.created_at.desc())
+        order = Thread.created_at.desc()
     elif sort == "most_replies":
-        query = query.order_by(Thread.reply_count.desc(), Thread.last_reply_at.desc())
+        order = (Thread.reply_count.desc(), Thread.last_reply_at.desc())
     else:  # latest_reply (默认)
-        query = query.order_by(Thread.last_reply_at.desc())
+        order = Thread.last_reply_at.desc()
     
-    # 查询帖子
-    threads = (
-        query
+    # 子查询：获取分页后的 thread IDs + 窗口函数总数（1 次 DB 往返）
+    total_count_window = func.count(Thread.id).over().label("_total")
+    id_query = db.query(Thread.id, total_count_window).filter(*base_filter)
+    if isinstance(order, tuple):
+        id_query = id_query.order_by(*order)
+    else:
+        id_query = id_query.order_by(order)
+    id_rows = (
+        id_query
         .offset((page - 1) * page_size)
         .limit(page_size)
         .all()
     )
+    
+    # 提取总数和 IDs
+    if id_rows:
+        total = id_rows[0]._total  # 窗口函数在每行都有相同的总数
+        page_thread_ids = [row[0] for row in id_rows]
+    else:
+        total = 0
+        page_thread_ids = []
+    total_pages = (total + page_size - 1) // page_size if total > 0 else 1
+    
+    # 用 IDs 加载完整对象 + joinedload（避免窗口函数与 JOIN 行数膨胀冲突）
+    if page_thread_ids:
+        # 保持原排序：用 CASE 表达式维持 ID 顺序
+        order_case = case(
+            *[(Thread.id == tid, idx) for idx, tid in enumerate(page_thread_ids)],
+            else_=len(page_thread_ids)
+        )
+        threads = (
+            db.query(Thread)
+            .options(joinedload(Thread.author), defer(Thread.content))  # P2 #16: 列表不需要 content 全文
+            .filter(Thread.id.in_(page_thread_ids))
+            .order_by(order_case)
+            .all()
+        )
+    else:
+        threads = []
     
     # 获取当前用户在这些帖子中的辅助状态（合并为1次 UNION ALL 查询）
     thread_ids = [t.id for t in threads]
@@ -451,7 +476,7 @@ async def list_threads(
 
 @router.post("", response_model=ThreadDetail)
 @limiter.limit("10/minute")
-async def create_thread(
+def create_thread(
     request: Request,
     data: ThreadCreate,
     db: Session = Depends(get_db),
@@ -562,21 +587,11 @@ async def get_thread(
             .first()
         )
     
-    # ===== 第2步：获取拉黑列表（合并为1次查询） =====
+    # ===== 第2步：获取拉黑列表（优先 Redis 缓存） =====
     blocked_user_ids = set()
     current_user_id = current_user.id if current_user else None
     if current_user_id:
-        # 合并"我拉黑的"和"拉黑我的"为一次 UNION ALL 查询
-        blocked_rows = (
-            db.query(BlockList.blocked_user_id.label("uid"))
-            .filter(BlockList.user_id == current_user_id)
-            .union_all(
-                db.query(BlockList.user_id.label("uid"))
-                .filter(BlockList.blocked_user_id == current_user_id)
-            )
-            .all()
-        )
-        blocked_user_ids = {row[0] for row in blocked_rows}
+        blocked_user_ids = await get_blocked_user_ids_async(db, current_user_id)
     
     # ===== 第3步：查回复列表 + 计数（合并为1次主查询 + 1次count） =====
     # 构建 count 查询
@@ -752,8 +767,22 @@ def delete_thread(
             detail="只能删除自己的帖子"
         )
     
+    # 获取该帖子所有回复 ID（用于清除 Like 和 Notification）
+    all_reply_ids = [r.id for r in db.query(Reply.id).filter(Reply.thread_id == thread_id).all()]
+    
     # 删除相关通知（外键约束）
     db.query(Notification).filter(Notification.thread_id == thread_id).delete(synchronize_session=False)
+    if all_reply_ids:
+        db.query(Notification).filter(Notification.reply_id.in_(all_reply_ids)).delete(synchronize_session=False)
+    
+    # P1 #10: 清除帖子和回复的 Like 记录
+    db.query(Like).filter(
+        Like.target_type == "thread", Like.target_id == thread_id
+    ).delete(synchronize_session=False)
+    if all_reply_ids:
+        db.query(Like).filter(
+            Like.target_type == "reply", Like.target_id.in_(all_reply_ids)
+        ).delete(synchronize_session=False)
     
     # 获取该帖子的所有主楼层 ID
     main_reply_ids = [r.id for r in db.query(Reply.id).filter(

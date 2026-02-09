@@ -90,12 +90,13 @@ def like_thread(
     db.add(like)
     
     # 原子更新帖子点赞数（避免并发丢失更新）
+    # P1 #11: 原子 UPDATE 后直接用计算值，不再冗余查询
     db.query(Thread).filter(Thread.id == thread_id).update(
         {Thread.like_count: func.coalesce(Thread.like_count, 0) + 1},
         synchronize_session="fetch"
     )
     db.flush()
-    thread = db.query(Thread).filter(Thread.id == thread_id).first()
+    new_like_count = (thread.like_count or 0) + 1
     
     # 给帖子作者加经验（被点赞）
     add_exp_for_being_liked(db, thread.author_id)
@@ -113,23 +114,19 @@ def like_thread(
     
     db.commit()
     
-    # 更新 Redis 缓存（fire-and-forget）
+    # 更新 Redis 缓存
     r = get_redis()
     if r:
-        try:
-            import asyncio
-            async def _update_cache():
-                try:
-                    await r.sadd(f"likes:user:{current_user.id}:threads", str(thread_id))
-                    await r.expire(f"likes:user:{current_user.id}:threads", 300)
-                except Exception:
-                    pass
-            loop = asyncio.get_running_loop()
-            loop.create_task(_update_cache())
-        except Exception:
-            pass
+        from ..redis_client import fire_and_forget
+        async def _update_cache():
+            try:
+                await r.sadd(f"likes:user:{current_user.id}:threads", str(thread_id))
+                await r.expire(f"likes:user:{current_user.id}:threads", 300)
+            except Exception:
+                pass
+        fire_and_forget(_update_cache())
     
-    return LikeResponse(liked=True, like_count=thread.like_count)
+    return LikeResponse(liked=True, like_count=new_like_count)
 
 
 # ==================== 回复点赞 ====================
@@ -174,12 +171,13 @@ def like_reply(
     db.add(like)
     
     # 原子更新回复点赞数（避免并发丢失更新）
+    # P1 #11: 原子 UPDATE 后直接用计算值，不再冗余查询
     db.query(Reply).filter(Reply.id == reply_id).update(
         {Reply.like_count: func.coalesce(Reply.like_count, 0) + 1},
         synchronize_session="fetch"
     )
     db.flush()
-    reply = db.query(Reply).filter(Reply.id == reply_id).first()
+    new_like_count = (reply.like_count or 0) + 1
     
     # 给回复作者加经验（被点赞）
     add_exp_for_being_liked(db, reply.author_id)
@@ -199,23 +197,19 @@ def like_reply(
     
     db.commit()
     
-    # 更新 Redis 缓存（fire-and-forget）
+    # 更新 Redis 缓存
     r = get_redis()
     if r:
-        try:
-            import asyncio
-            async def _update_cache():
-                try:
-                    await r.sadd(f"likes:user:{current_user.id}:replies", str(reply_id))
-                    await r.expire(f"likes:user:{current_user.id}:replies", 300)
-                except Exception:
-                    pass
-            loop = asyncio.get_running_loop()
-            loop.create_task(_update_cache())
-        except Exception:
-            pass
+        from ..redis_client import fire_and_forget
+        async def _update_cache():
+            try:
+                await r.sadd(f"likes:user:{current_user.id}:replies", str(reply_id))
+                await r.expire(f"likes:user:{current_user.id}:replies", 300)
+            except Exception:
+                pass
+        fire_and_forget(_update_cache())
     
-    return LikeResponse(liked=True, like_count=reply.like_count)
+    return LikeResponse(liked=True, like_count=new_like_count)
 
 
 # ==================== 辅助函数 ====================
@@ -244,24 +238,20 @@ def get_user_liked_thread_ids(db: Session, user_id: int, thread_ids: list) -> se
     
     result = {like[0] for like in likes}
     
-    # 异步回写 Redis 缓存（fire-and-forget）
+    # 异步回写 Redis 缓存
     if r and result:
-        try:
-            import asyncio
-            async def _write_cache():
-                try:
-                    key = f"likes:user:{user_id}:threads"
-                    pipe = r.pipeline()
-                    await pipe.delete(key)
-                    await pipe.sadd(key, *[str(tid) for tid in result])
-                    await pipe.expire(key, 300)
-                    await pipe.execute()
-                except Exception:
-                    pass
-            loop = asyncio.get_running_loop()
-            loop.create_task(_write_cache())
-        except Exception:
-            pass
+        from ..redis_client import fire_and_forget
+        async def _write_cache():
+            try:
+                key = f"likes:user:{user_id}:threads"
+                pipe = r.pipeline()
+                await pipe.delete(key)
+                await pipe.sadd(key, *[str(tid) for tid in result])
+                await pipe.expire(key, 300)
+                await pipe.execute()
+            except Exception:
+                pass
+        fire_and_forget(_write_cache())
     
     return result
 
@@ -284,24 +274,20 @@ def get_user_liked_reply_ids(db: Session, user_id: int, reply_ids: list) -> set:
     
     result = {like[0] for like in likes}
     
-    # 异步回写 Redis 缓存（fire-and-forget）
+    # 异步回写 Redis 缓存
     if r and result:
-        try:
-            import asyncio
-            async def _write_cache():
-                try:
-                    key = f"likes:user:{user_id}:replies"
-                    pipe = r.pipeline()
-                    await pipe.delete(key)
-                    await pipe.sadd(key, *[str(rid) for rid in result])
-                    await pipe.expire(key, 300)
-                    await pipe.execute()
-                except Exception:
-                    pass
-            loop = asyncio.get_running_loop()
-            loop.create_task(_write_cache())
-        except Exception:
-            pass
+        from ..redis_client import fire_and_forget
+        async def _write_cache():
+            try:
+                key = f"likes:user:{user_id}:replies"
+                pipe = r.pipeline()
+                await pipe.delete(key)
+                await pipe.sadd(key, *[str(rid) for rid in result])
+                await pipe.expire(key, 300)
+                await pipe.execute()
+            except Exception:
+                pass
+        fire_and_forget(_write_cache())
     
     return result
 
