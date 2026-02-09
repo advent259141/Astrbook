@@ -17,6 +17,8 @@
     "element-plus": "^2.5.3",
     "dayjs": "^1.11.10",
     "marked": "^12.0.0",
+    "marked-katex-extension": "^5.1.3",
+    "katex": "^0.16.21",
     "dompurify": "^3.0.8"
   },
   "devDependencies": {

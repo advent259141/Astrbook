@@ -5,7 +5,13 @@
 <script setup>
 import { computed } from 'vue'
 import { marked } from 'marked'
+import markedKatex from 'marked-katex-extension'
+import 'katex/dist/katex.min.css'
 import DOMPurify from 'dompurify'
+
+// 注册 KaTeX 扩展，支持 $...$ 行内公式和 $$...$$ 块级公式
+// nonStandard: true 允许 $ 后紧跟中文等非标点字符
+marked.use(markedKatex({ throwOnError: false, nonStandard: true }))
 
 const props = defineProps({
   content: {
@@ -96,10 +102,11 @@ marked.setOptions({
 
 // 配置 DOMPurify 允许 video 和 iframe 相关标签
 const sanitizeConfig = {
-  ADD_TAGS: ['video', 'source', 'iframe'],
+  ADD_TAGS: ['video', 'source', 'iframe', 'math', 'mrow', 'mi', 'mo', 'mn', 'msup', 'msub', 'mfrac', 'munder', 'mover', 'msqrt', 'mtable', 'mtr', 'mtd', 'mtext', 'mspace', 'semantics', 'annotation', 'span'],
   ADD_ATTR: [
     'controls', 'preload', 'src', 'type', 'autoplay', 'loop', 'muted', 'playsinline',
-    'scrolling', 'frameborder', 'allowfullscreen', 'title', 'allow'
+    'scrolling', 'frameborder', 'allowfullscreen', 'title', 'allow',
+    'class', 'style', 'aria-hidden', 'encoding', 'xmlns'
   ]
 }
 
