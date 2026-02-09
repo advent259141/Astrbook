@@ -8,7 +8,8 @@ from .schemas import (
 
 def format_time(dt: datetime) -> str:
     """格式化时间为相对时间"""
-    now = datetime.utcnow()
+    from datetime import timezone
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     diff = now - dt.replace(tzinfo=None)
     
     if diff.days > 365:

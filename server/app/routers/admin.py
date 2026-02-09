@@ -13,6 +13,11 @@ from ..models import (
     SystemSettings,
     ModerationLog,
     Notification,
+    Like,
+    UserLevel,
+    BlockList,
+    ImageUpload,
+    OAuthAccount,
 )
 from ..schemas import AdminLogin, AdminLoginResponse, AdminResponse, THREAD_CATEGORIES
 from ..auth import verify_admin, verify_password, generate_token, invalidate_user_cache
@@ -82,25 +87,25 @@ async def get_stats(
         except Exception:
             pass
 
-    thread_count = db.query(func.count(Thread.id)).scalar()
-    reply_count = db.query(func.count(Reply.id)).scalar()
-    user_count = db.query(func.count(User.id)).scalar()
-
-    # 今日新帖
+    # P3 #21: 合并 4 次 COUNT 为 1 次查询（4 个标量子查询合并为 1 条 SQL）
     today_start = datetime.now(timezone.utc).replace(
         hour=0, minute=0, second=0, microsecond=0
     )
-    today_threads = (
-        db.query(func.count(Thread.id))
-        .filter(Thread.created_at >= today_start)
-        .scalar()
-    )
+    from sqlalchemy import select
+    stats_row = db.execute(
+        select(
+            select(func.count(Thread.id)).label("thread_count"),
+            select(func.count(Reply.id)).label("reply_count"),
+            select(func.count(User.id)).label("user_count"),
+            select(func.count(Thread.id)).where(Thread.created_at >= today_start).label("today_threads"),
+        )
+    ).first()
 
     result = {
-        "threadCount": thread_count,
-        "replyCount": reply_count,
-        "userCount": user_count,
-        "todayThreads": today_threads,
+        "threadCount": stats_row[0],
+        "replyCount": stats_row[1],
+        "userCount": stats_row[2],
+        "todayThreads": stats_row[3],
     }
 
     # 写入 Redis 缓存
@@ -255,6 +260,34 @@ def delete_user(
         (Notification.user_id == user_id) | (Notification.from_user_id == user_id)
     ).delete(synchronize_session=False)
 
+    # P1 #10: 清除 Like 记录（用户的点赞 + 被删帖子/回复收到的点赞）
+    db.query(Like).filter(Like.user_id == user_id).delete(synchronize_session=False)
+    if thread_ids:
+        db.query(Like).filter(
+            Like.target_type == "thread", Like.target_id.in_(thread_ids)
+        ).delete(synchronize_session=False)
+    if all_reply_ids:
+        db.query(Like).filter(
+            Like.target_type == "reply", Like.target_id.in_(all_reply_ids)
+        ).delete(synchronize_session=False)
+
+    # P1 #10: 清除 UserLevel 记录
+    db.query(UserLevel).filter(UserLevel.user_id == user_id).delete(synchronize_session=False)
+
+    # P1 #10: 清除 BlockList 记录（双向）
+    db.query(BlockList).filter(
+        (BlockList.user_id == user_id) | (BlockList.blocked_user_id == user_id)
+    ).delete(synchronize_session=False)
+
+    # P1 #10: 清除 ImageUpload 记录
+    db.query(ImageUpload).filter(ImageUpload.user_id == user_id).delete(synchronize_session=False)
+
+    # P1 #10: 清除 OAuthAccount 记录
+    db.query(OAuthAccount).filter(OAuthAccount.user_id == user_id).delete(synchronize_session=False)
+
+    # P1 #10: 清除 ModerationLog 记录
+    db.query(ModerationLog).filter(ModerationLog.user_id == user_id).delete(synchronize_session=False)
+
     # 清除回复中的 reply_to_id 引用（避免外键约束）
     if all_reply_ids:
         db.query(Reply).filter(Reply.reply_to_id.in_(all_reply_ids)).update(
@@ -367,6 +400,15 @@ def admin_delete_thread(
         db.query(Notification).filter(Notification.reply_id.in_(reply_ids)).delete(
             synchronize_session=False
         )
+
+    # P1 #10: 清除帖子和回复的 Like 记录
+    db.query(Like).filter(
+        Like.target_type == "thread", Like.target_id == thread_id
+    ).delete(synchronize_session=False)
+    if reply_ids:
+        db.query(Like).filter(
+            Like.target_type == "reply", Like.target_id.in_(reply_ids)
+        ).delete(synchronize_session=False)
 
     # 清除回复中的 reply_to_id 和 parent_id 引用（避免外键约束）
     if reply_ids:
@@ -636,10 +678,11 @@ async def test_moderation(
     }
 
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(url, headers=headers, json=payload)
-            response.raise_for_status()
-            result = response.json()
+        from ..moderation import get_http_client
+        client = get_http_client()
+        response = await client.post(url, headers=headers, json=payload)
+        response.raise_for_status()
+        result = response.json()
 
         reply = result["choices"][0]["message"]["content"].strip()
 
@@ -758,16 +801,16 @@ def get_moderation_stats(
     """
     获取审核统计
     """
-    total = db.query(func.count(ModerationLog.id)).scalar()
-    passed = (
-        db.query(func.count(ModerationLog.id))
-        .filter(ModerationLog.passed == True)
-        .scalar()
-    )
-    blocked = (
-        db.query(func.count(ModerationLog.id))
-        .filter(ModerationLog.passed == False)
-        .scalar()
-    )
+    # P3 #31: 合并 3 次 COUNT 为 1 次 CASE/WHEN 聚合查询
+    from sqlalchemy import case as sa_case
+    stats = db.query(
+        func.count(ModerationLog.id).label("total"),
+        func.sum(sa_case((ModerationLog.passed == True, 1), else_=0)).label("passed"),
+        func.sum(sa_case((ModerationLog.passed == False, 1), else_=0)).label("blocked"),
+    ).first()
 
-    return {"total": total, "passed": passed, "blocked": blocked}
+    return {
+        "total": stats.total or 0,
+        "passed": int(stats.passed or 0),
+        "blocked": int(stats.blocked or 0),
+    }

@@ -24,8 +24,12 @@ security = HTTPBearer()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # ===== 用户认证缓存（优先 Redis，降级到内存字典） =====
-# 内存降级用
-_user_cache: dict[int, tuple[User, float]] = {}
+# P2 #15: 内存缓存加上限，防止长期运行 OOM
+try:
+    from cachetools import TTLCache
+    _user_cache: TTLCache = TTLCache(maxsize=1024, ttl=60)
+except ImportError:
+    _user_cache: dict[int, tuple[User, float]] = {}  # type: ignore[no-redef]
 _user_cache_lock = threading.Lock()
 _USER_CACHE_TTL = 300  # Redis 模式提升到 5 分钟
 _USER_CACHE_TTL_LOCAL = 60  # 内存降级 60 秒
@@ -40,7 +44,7 @@ def _user_to_cache(user: User) -> str:
         "avatar": user.avatar,
         "is_banned": user.is_banned,
         "ban_reason": user.ban_reason,
-        "bio": user.bio,
+        "persona": user.persona,
         "token": user.token,
         "created_at": user.created_at.isoformat() if user.created_at else None,
     })
@@ -58,30 +62,24 @@ def _user_from_cache(data: str, db: Session) -> User:
 
 
 def _get_cached_user(db: Session, user_id: int) -> Optional[User]:
-    """从缓存获取用户，未命中则查 DB 并写入缓存（优先 Redis）"""
-    r = get_redis()
-
-    # 1. 尝试从 Redis 读取
-    if r:
-        try:
-            import asyncio
-            loop = asyncio.get_event_loop()
-            # 在同步上下文中无法直接 await，使用内存缓存作为同步快速路径
-        except Exception:
-            pass
-
-    # 2. 内存缓存快速路径（同步函数，始终可用）
+    """从缓存获取用户（同步版，仅走内存缓存 + DB）"""
+    # 1. 内存缓存快速路径
     now = time.monotonic()
     with _user_cache_lock:
         entry = _user_cache.get(user_id)
-        if entry and entry[1] > now:
-            return db.merge(entry[0], load=False)
+        if entry is not None:
+            cached_user, expire_at = entry
+            if expire_at > now:
+                return db.merge(cached_user, load=False)
+            else:
+                _user_cache.pop(user_id, None)
 
-    # 3. Cache miss — query DB
+    # 2. Cache miss — query DB
     user = db.query(User).filter(User.id == user_id).first()
     if user is not None:
         db.refresh(user)
         # 写入 Redis 缓存（异步，fire-and-forget）
+        r = get_redis()
         if r:
             try:
                 import asyncio
@@ -242,7 +240,8 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    user = _get_cached_user(db, user_id)
+    # P1 #6: async 上下文优先走 Redis 缓存
+    user = await get_cached_user_async(db, user_id)
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -299,7 +298,7 @@ async def get_optional_user(
     return user
 
 
-async def verify_admin(
+def verify_admin(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: Session = Depends(get_db),
 ) -> Admin:

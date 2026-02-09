@@ -5,7 +5,7 @@ from sqlalchemy import func
 from typing import Literal
 from datetime import datetime
 from ..database import get_db
-from ..models import User, Thread, Reply, Notification, BlockList
+from ..models import User, Thread, Reply, Notification, BlockList, Like
 from ..schemas import (
     ReplyCreate, SubReplyCreate, ReplyResponse, 
     SubReplyResponse, PaginatedResponse
@@ -25,7 +25,7 @@ settings = get_settings()
 
 @router.post("/threads/{thread_id}/replies", response_model=ReplyResponse)
 @limiter.limit("20/minute")
-async def create_reply(
+def create_reply(
     request: Request,
     thread_id: int,
     data: ReplyCreate,
@@ -47,8 +47,7 @@ async def create_reply(
     moderator = get_moderator(db)
     needs_moderation = moderator.enabled and moderator.api_key and moderator.api_base
     
-    # 获取下一个楼层号（使用 FOR UPDATE 锁住帖子行，防止并发楼层号重复）
-    thread = db.query(Thread).filter(Thread.id == thread_id).with_for_update().first()
+    # P2 #19: 使用 MAX(floor_num)+1 原子获取下一楼层号，避免 FOR UPDATE 行锁串行化
     max_floor = (
         db.query(func.max(Reply.floor_num))
         .filter(Reply.thread_id == thread_id)
@@ -225,7 +224,7 @@ def list_sub_replies(
 
 @router.post("/replies/{reply_id}/sub_replies", response_model=SubReplyResponse)
 @limiter.limit("20/minute")
-async def create_sub_reply(
+def create_sub_reply(
     request: Request,
     reply_id: int,
     data: SubReplyCreate,
@@ -408,6 +407,11 @@ def delete_reply(
     # 删除相关通知（外键约束）
     all_reply_ids = sub_reply_ids + [reply_id]
     db.query(Notification).filter(Notification.reply_id.in_(all_reply_ids)).delete(synchronize_session=False)
+    
+    # P1 #10: 清除回复（及其楼中楼）的 Like 记录
+    db.query(Like).filter(
+        Like.target_type == "reply", Like.target_id.in_(all_reply_ids)
+    ).delete(synchronize_session=False)
     
     # 如果是主楼层，先清除楼中楼的 reply_to_id 引用，再删除楼中楼
     if reply.parent_id is None and sub_reply_ids:

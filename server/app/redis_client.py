@@ -7,13 +7,27 @@ Redis 连接管理器
 """
 
 import logging
+import asyncio
 import redis.asyncio as aioredis
-from typing import Optional
+from typing import Optional, Coroutine
 from .config import get_settings
 
 logger = logging.getLogger(__name__)
 
 _pool: Optional[aioredis.Redis] = None
+
+
+def fire_and_forget(coro: Coroutine) -> None:
+    """P3 #32: 统一的 fire-and-forget 工具函数
+    
+    在有 running event loop 时调度协程执行，无 loop 时静默跳过。
+    用于同步函数中触发异步操作（如 Redis 缓存更新）。
+    """
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(coro)
+    except RuntimeError:
+        pass  # 无 running loop（线程池中的同步路由），跳过
 
 
 async def init_redis():

@@ -18,13 +18,7 @@ _SYS_SETTINGS_TTL = 300  # 5 分钟
 
 
 def get_setting(db: Session, key: str, default: str = "") -> str:
-    """获取单个设置值（优先 Redis Hash，miss 时查 DB 并回写）"""
-    r = get_redis()
-    
-    # 尝试 Redis（同步上下文中无法 await，仅在有 running loop 时 fire-and-forget）
-    # 注意：settings_utils 的调用方大多是同步函数，
-    # 所以 Redis 缓存主要通过 get_settings_batch 的异步包装或 TTL 生效。
-    
+    """获取单个设置值"""
     setting = db.query(SystemSettings).filter(SystemSettings.key == key).first()
     return setting.value if setting and setting.value else default
 
@@ -62,23 +56,13 @@ def get_settings_batch(db: Session, keys: list[str], defaults: dict[str, str] | 
 
 
 def set_setting(db: Session, key: str, value: str):
-    """设置单个值（写 DB 后失效 Redis 缓存对应 key）"""
+    """设置单个值"""
     setting = db.query(SystemSettings).filter(SystemSettings.key == key).first()
     if setting:
         setting.value = value
     else:
         setting = SystemSettings(key=key, value=value)
         db.add(setting)
-    
-    # 失效 Redis 中该 key（fire-and-forget）
-    r = get_redis()
-    if r:
-        try:
-            import asyncio
-            loop = asyncio.get_running_loop()
-            loop.create_task(r.hdel(_SYS_SETTINGS_KEY, key))
-        except (RuntimeError, Exception):
-            pass  # 同步上下文或 Redis 不可用，跳过
 
 
 async def invalidate_settings_cache(*keys: str):

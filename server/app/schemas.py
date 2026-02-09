@@ -56,8 +56,22 @@ class UserLogin(BaseModel):
     password: str = Field(..., min_length=6)
 
 
+class UserPublicResponse(BaseModel):
+    """用户公开信息响应（不含 persona 等私密字段，用于帖子/回复/通知等公开场景）"""
+    id: int
+    username: str
+    nickname: Optional[str]  # 显示昵称
+    avatar: Optional[str]
+    level: int = 1  # 等级
+    exp: int = 0  # 经验值
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
 class UserResponse(BaseModel):
-    """用户信息响应"""
+    """用户完整信息响应（含 persona，仅用于用户查看自己资料等场景）"""
     id: int
     username: str
     nickname: Optional[str]  # 显示昵称
@@ -157,7 +171,7 @@ class ThreadListItem(BaseModel):
     title: str
     category: str = "chat"
     category_name: Optional[str] = None
-    author: UserResponse
+    author: UserPublicResponse
     reply_count: int
     like_count: int = 0  # 点赞数
     view_count: int = 0  # 浏览量
@@ -183,7 +197,7 @@ class ThreadDetail(BaseModel):
     category: str = "chat"
     category_name: Optional[str] = None
     content: str
-    author: UserResponse
+    author: UserPublicResponse
     reply_count: int
     like_count: int = 0  # 点赞数
     view_count: int = 0  # 浏览量
@@ -217,9 +231,9 @@ class SubReplyCreate(BaseModel):
 class SubReplyResponse(BaseModel):
     """楼中楼响应"""
     id: int
-    author: UserResponse
+    author: UserPublicResponse
     content: str
-    reply_to: Optional[UserResponse] = None  # @的人
+    reply_to: Optional[UserPublicResponse] = None  # @的人
     like_count: int = 0  # 点赞数
     liked_by_me: bool = False  # 当前用户是否已点赞
     created_at: datetime
@@ -233,7 +247,7 @@ class ReplyResponse(BaseModel):
     """楼层响应"""
     id: int
     floor_num: int
-    author: UserResponse
+    author: UserPublicResponse
     content: str
     sub_replies: List[SubReplyResponse] = []  # 预览的楼中楼
     sub_reply_count: int = 0  # 楼中楼总数
@@ -272,7 +286,7 @@ class NotificationResponse(BaseModel):
     thread_id: Optional[int] = None  # 审核通知可能无关联帖子
     thread_title: Optional[str] = None
     reply_id: Optional[int] = None
-    from_user: UserResponse
+    from_user: UserPublicResponse
     content_preview: Optional[str] = None
     is_read: bool
     created_at: datetime
@@ -339,7 +353,7 @@ class BlockUserRequest(BaseModel):
 class BlockedUserResponse(BaseModel):
     """被拉黑用户信息"""
     id: int  # 拉黑记录ID
-    blocked_user: UserResponse
+    blocked_user: UserPublicResponse
     created_at: datetime
     
     class Config:
@@ -373,22 +387,4 @@ class UserLevelResponse(BaseModel):
     daily_reply_exp_cap: int
 
 
-# ========== 点赞功能 ==========
-
-class LikeResponse(BaseModel):
-    """点赞响应"""
-    liked: bool
-    like_count: int
-
-
-# ========== 等级系统 ==========
-
-class UserLevelResponse(BaseModel):
-    """用户等级详情响应"""
-    level: int
-    exp: int
-    next_level_exp: int
-    today_post_exp: int
-    today_reply_exp: int
-    daily_post_exp_cap: int
-    daily_reply_exp_cap: int
+# P3 #26: 删除重复的 LikeResponse 和 UserLevelResponse 定义

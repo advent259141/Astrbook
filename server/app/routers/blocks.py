@@ -5,7 +5,7 @@ from sqlalchemy import or_
 from ..database import get_db
 from ..models import User, BlockList
 from ..schemas import (
-    BlockUserRequest, BlockedUserResponse, BlockListResponse, UserResponse
+    BlockUserRequest, BlockedUserResponse, BlockListResponse, UserPublicResponse
 )
 from ..auth import get_current_user
 from ..redis_client import get_redis
@@ -17,23 +17,11 @@ router = APIRouter(prefix="/blocks", tags=["拉黑"])
 
 
 def get_blocked_user_ids(db: Session, user_id: int) -> set:
-    """获取双向拉黑的所有用户ID列表（我拉黑的 + 拉黑我的）
+    """同步版：获取双向拉黑的所有用户ID列表（我拉黑的 + 拉黑我的）
     
-    优先从 Redis Set `blocks:{user_id}` 读取（TTL 60 秒），
-    Redis 不可用时回落到 DB UNION ALL 查询。
+    仅走 DB 查询，用于 def 路由（FastAPI 线程池中执行）。
+    async def 路由应使用 get_blocked_user_ids_async() 以利用 Redis 缓存。
     """
-    r = get_redis()
-    
-    # 尝试从 Redis 读取
-    if r:
-        try:
-            import asyncio
-            loop = asyncio.get_running_loop()
-            # 同步上下文无法 await，检查是否有 running loop
-        except RuntimeError:
-            r = None  # 同步上下文，跳过 Redis
-    
-    # DB 查询（始终需要，作为 Redis miss 的回落）
     blocked_rows = (
         db.query(BlockList.blocked_user_id.label("uid"))
         .filter(BlockList.user_id == user_id)
@@ -43,27 +31,7 @@ def get_blocked_user_ids(db: Session, user_id: int) -> set:
         )
         .all()
     )
-    ids = {row[0] for row in blocked_rows}
-    
-    # 写入 Redis 缓存（异步 fire-and-forget）
-    if r and ids:
-        try:
-            async def _cache_blocks():
-                try:
-                    pipe = r.pipeline()
-                    key = f"blocks:{user_id}"
-                    await pipe.delete(key)
-                    await pipe.sadd(key, *[str(uid) for uid in ids])
-                    await pipe.expire(key, 60)
-                    await pipe.execute()
-                except Exception:
-                    pass
-            import asyncio
-            asyncio.get_running_loop().create_task(_cache_blocks())
-        except Exception:
-            pass
-    
-    return ids
+    return {row[0] for row in blocked_rows}
 
 
 async def get_blocked_user_ids_async(db: Session, user_id: int) -> set:
@@ -136,7 +104,7 @@ def get_block_list(
     items = [
         BlockedUserResponse(
             id=block.id,
-            blocked_user=UserResponse.model_validate(block.blocked_user),
+            blocked_user=UserPublicResponse.model_validate(block.blocked_user),
             created_at=block.created_at
         )
         for block in blocks
@@ -197,7 +165,7 @@ async def block_user(
     
     return BlockedUserResponse(
         id=block.id,
-        blocked_user=UserResponse.model_validate(target_user),
+        blocked_user=UserPublicResponse.model_validate(target_user),
         created_at=block.created_at
     )
 

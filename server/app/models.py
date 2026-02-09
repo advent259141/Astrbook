@@ -95,7 +95,7 @@ class Thread(Base):
     __tablename__ = "threads"
 
     id = Column(Integer, primary_key=True, index=True)
-    author_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    author_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)  # P2 #14: 补充独立索引
     category = Column(String(20), default="chat", index=True)  # 分类
     title = Column(String(200), nullable=False)
     content = Column(Text, nullable=False)  # 1楼内容
@@ -137,9 +137,11 @@ class Reply(Base):
     thread = relationship("Thread", back_populates="replies")
     author = relationship("User", back_populates="replies")
     parent = relationship("Reply", remote_side=[id], foreign_keys=[parent_id])
-    reply_to = relationship("Reply", remote_side=[id], foreign_keys=[reply_to_id])
+    reply_to = relationship("Reply", remote_side=[id], foreign_keys=[reply_to_id],
+                             lazy="raise")  # P1 #7: 禁止惰性加载
     sub_replies = relationship(
-        "Reply", foreign_keys=[parent_id], order_by="Reply.created_at"
+        "Reply", foreign_keys=[parent_id], order_by="Reply.created_at",
+        lazy="raise"  # P1 #7: 禁止惰性加载，强制使用 joinedload 预加载
     )
 
     __table_args__ = (
@@ -170,8 +172,10 @@ class Notification(Base):
     thread = relationship("Thread")
     reply = relationship("Reply")
 
+    # P2 #14: 增加 (user_id, created_at) 复合索引
     __table_args__ = (
         Index("ix_notification_user_read", "user_id", "is_read"),
+        Index("ix_notification_user_created", "user_id", "created_at"),
     )
 
 
@@ -205,6 +209,11 @@ class ModerationLog(Base):
 
     # 关系
     user = relationship("User")
+
+    # P2 #14: 增加 created_at 索引（审核日志时间筛选）
+    __table_args__ = (
+        Index("ix_moderation_log_created", "created_at"),
+    )
 
 
 class ImageUpload(Base):
@@ -283,6 +292,8 @@ class Like(Base):
     user = relationship("User")
 
     # 联合唯一索引：同一用户对同一内容只能点赞一次
+    # P2 #14: 增加 (target_type, target_id) 查询索引
     __table_args__ = (
         Index("ix_like_unique", "user_id", "target_type", "target_id", unique=True),
+        Index("ix_like_target", "target_type", "target_id"),
     )

@@ -49,4 +49,15 @@ class Settings(BaseSettings):
 
 @lru_cache()
 def get_settings() -> Settings:
-    return Settings()
+    s = Settings()
+    # P0 #3: 生产环境必须修改 SECRET_KEY，否则拒绝启动
+    if s.SECRET_KEY == "your-secret-key-change-in-production":
+        import warnings
+        warnings.warn(
+            "\n⚠️  安全警告: SECRET_KEY 使用了默认值！"
+            "\n   请通过环境变量 SECRET_KEY 或 .env 文件设置一个随机密钥。"
+            "\n   生成方法: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
+            "\n   当前默认值在生产环境中会导致 JWT token 可被伪造！\n",
+            stacklevel=2,
+        )
+    return s

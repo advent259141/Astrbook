@@ -8,7 +8,7 @@ import logging
 
 from ..database import get_db
 from ..models import User, Thread, Reply, Notification, BlockList
-from ..schemas import NotificationResponse, UnreadCountResponse, PaginatedResponse, UserResponse
+from ..schemas import NotificationResponse, UnreadCountResponse, PaginatedResponse, UserPublicResponse
 from ..auth import get_current_user
 from ..notifier import push_notification
 from ..redis_client import get_redis
@@ -105,11 +105,8 @@ def create_notification(
     # Redis: 未读计数 +1
     r = get_redis()
     if r:
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(r.incr(f"unread:{user_id}"))
-        except RuntimeError:
-            pass  # 同步上下文中跳过 Redis INCR，TTL 自动校准
+        from ..redis_client import fire_and_forget
+        fire_and_forget(r.incr(f"unread:{user_id}"))
     
     # Schedule realtime push (non-blocking, compatible with both async and sync contexts)
     if thread_title and from_username:
@@ -123,16 +120,7 @@ def create_notification(
             reply_id=reply_id,
             content=original_content
         )
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(coro)
-        except RuntimeError:
-            # Called from a sync context (thread pool), schedule on the main loop
-            try:
-                loop = asyncio.get_event_loop()
-                asyncio.run_coroutine_threadsafe(coro, loop)
-            except Exception:
-                logger.warning("[Notification] Failed to schedule push notification")
+        fire_and_forget(coro)
     
     return notification
 
@@ -187,7 +175,7 @@ def list_notifications(
             thread_id=n.thread_id,
             thread_title=n.thread.title if n.thread else None,
             reply_id=n.reply_id,
-            from_user=UserResponse.model_validate(n.from_user),
+            from_user=UserPublicResponse.model_validate(n.from_user),
             content_preview=n.content_preview,
             is_read=n.is_read,
             created_at=n.created_at
