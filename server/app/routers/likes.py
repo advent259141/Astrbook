@@ -7,7 +7,11 @@ from ..schemas import LikeResponse
 from ..auth import get_current_user
 from ..level_service import add_exp_for_being_liked
 from ..rate_limit import limiter
+from ..redis_client import get_redis
 
+import logging
+
+logger = logging.getLogger(__name__)
 router = APIRouter(tags=["点赞"])
 
 
@@ -109,6 +113,22 @@ def like_thread(
     
     db.commit()
     
+    # 更新 Redis 缓存（fire-and-forget）
+    r = get_redis()
+    if r:
+        try:
+            import asyncio
+            async def _update_cache():
+                try:
+                    await r.sadd(f"likes:user:{current_user.id}:threads", str(thread_id))
+                    await r.expire(f"likes:user:{current_user.id}:threads", 300)
+                except Exception:
+                    pass
+            loop = asyncio.get_running_loop()
+            loop.create_task(_update_cache())
+        except Exception:
+            pass
+    
     return LikeResponse(liked=True, like_count=thread.like_count)
 
 
@@ -179,16 +199,41 @@ def like_reply(
     
     db.commit()
     
+    # 更新 Redis 缓存（fire-and-forget）
+    r = get_redis()
+    if r:
+        try:
+            import asyncio
+            async def _update_cache():
+                try:
+                    await r.sadd(f"likes:user:{current_user.id}:replies", str(reply_id))
+                    await r.expire(f"likes:user:{current_user.id}:replies", 300)
+                except Exception:
+                    pass
+            loop = asyncio.get_running_loop()
+            loop.create_task(_update_cache())
+        except Exception:
+            pass
+    
     return LikeResponse(liked=True, like_count=reply.like_count)
 
 
 # ==================== 辅助函数 ====================
 
 def get_user_liked_thread_ids(db: Session, user_id: int, thread_ids: list) -> set:
-    """获取用户已点赞的帖子 ID 集合"""
+    """获取用户已点赞的帖子 ID 集合（优先 Redis，降级 DB）"""
     if not thread_ids:
         return set()
     
+    r = get_redis()
+    if r:
+        try:
+            import asyncio
+            # 同步上下文中无法直接 await，使用 DB 查询后回写缓存
+        except Exception:
+            pass
+    
+    # DB 查询（主路径）
     likes = db.query(Like.target_id).filter(
         and_(
             Like.user_id == user_id,
@@ -197,14 +242,38 @@ def get_user_liked_thread_ids(db: Session, user_id: int, thread_ids: list) -> se
         )
     ).all()
     
-    return {like[0] for like in likes}
+    result = {like[0] for like in likes}
+    
+    # 异步回写 Redis 缓存（fire-and-forget）
+    if r and result:
+        try:
+            import asyncio
+            async def _write_cache():
+                try:
+                    key = f"likes:user:{user_id}:threads"
+                    pipe = r.pipeline()
+                    await pipe.delete(key)
+                    await pipe.sadd(key, *[str(tid) for tid in result])
+                    await pipe.expire(key, 300)
+                    await pipe.execute()
+                except Exception:
+                    pass
+            loop = asyncio.get_running_loop()
+            loop.create_task(_write_cache())
+        except Exception:
+            pass
+    
+    return result
 
 
 def get_user_liked_reply_ids(db: Session, user_id: int, reply_ids: list) -> set:
-    """获取用户已点赞的回复 ID 集合"""
+    """获取用户已点赞的回复 ID 集合（优先 Redis，降级 DB）"""
     if not reply_ids:
         return set()
     
+    r = get_redis()
+    
+    # DB 查询（主路径）
     likes = db.query(Like.target_id).filter(
         and_(
             Like.user_id == user_id,
@@ -213,7 +282,28 @@ def get_user_liked_reply_ids(db: Session, user_id: int, reply_ids: list) -> set:
         )
     ).all()
     
-    return {like[0] for like in likes}
+    result = {like[0] for like in likes}
+    
+    # 异步回写 Redis 缓存（fire-and-forget）
+    if r and result:
+        try:
+            import asyncio
+            async def _write_cache():
+                try:
+                    key = f"likes:user:{user_id}:replies"
+                    pipe = r.pipeline()
+                    await pipe.delete(key)
+                    await pipe.sadd(key, *[str(rid) for rid in result])
+                    await pipe.expire(key, 300)
+                    await pipe.execute()
+                except Exception:
+                    pass
+            loop = asyncio.get_running_loop()
+            loop.create_task(_write_cache())
+        except Exception:
+            pass
+    
+    return result
 
 
 def is_thread_liked_by_user(db: Session, user_id: int, thread_id: int) -> bool:

@@ -268,8 +268,8 @@ class ThreadWithReplies(BaseModel):
 class NotificationResponse(BaseModel):
     """通知响应"""
     id: int
-    type: str  # reply | sub_reply | mention
-    thread_id: int
+    type: str  # reply | sub_reply | mention | moderation
+    thread_id: Optional[int] = None  # 审核通知可能无关联帖子
     thread_title: Optional[str] = None
     reply_id: Optional[int] = None
     from_user: UserResponse

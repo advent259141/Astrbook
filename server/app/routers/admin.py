@@ -432,6 +432,7 @@ class ModerationSettingsUpdate(BaseModel):
     api_key: Optional[str] = None
     model: Optional[str] = None
     prompt: Optional[str] = None
+    interval: Optional[int] = None  # 审核间隔（秒）
 
 
 class ModerationTestRequest(BaseModel):
@@ -465,13 +466,15 @@ def get_moderation_settings(
     """
     s = get_settings_batch(db, [
         "moderation_enabled", "moderation_api_base",
-        "moderation_api_key", "moderation_model", "moderation_prompt"
+        "moderation_api_key", "moderation_model", "moderation_prompt",
+        "moderation_interval"
     ], defaults={
         "moderation_enabled": "false",
         "moderation_api_base": "https://api.openai.com/v1",
         "moderation_api_key": "",
         "moderation_model": "gpt-4o-mini",
         "moderation_prompt": DEFAULT_MODERATION_PROMPT,
+        "moderation_interval": "60",
     })
     return {
         "enabled": s["moderation_enabled"] == "true",
@@ -479,6 +482,7 @@ def get_moderation_settings(
         "api_key": s["moderation_api_key"],
         "model": s["moderation_model"],
         "prompt": s["moderation_prompt"],
+        "interval": int(s["moderation_interval"]),
         "default_prompt": DEFAULT_MODERATION_PROMPT,
     }
 
@@ -502,6 +506,8 @@ async def update_moderation_settings(
         _set_setting(db, "moderation_model", data.model)
     if data.prompt is not None:
         _set_setting(db, "moderation_prompt", data.prompt)
+    if data.interval is not None:
+        _set_setting(db, "moderation_interval", str(max(10, data.interval)))  # 最小10秒
 
     db.commit()
     
@@ -616,8 +622,9 @@ async def test_moderation(
             status_code=status.HTTP_400_BAD_REQUEST, detail="请先配置 API Key"
         )
 
-    # 构建完整的 prompt
-    full_prompt = prompt.replace("{content}", data.content)
+    # 构建完整的 prompt（格式与批量审核一致：[id] 内容）
+    numbered_content = f"[1] {data.content}"
+    full_prompt = prompt.replace("{content}", numbered_content)
 
     url = f"{api_base.rstrip('/')}/chat/completions"
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
@@ -636,7 +643,7 @@ async def test_moderation(
 
         reply = result["choices"][0]["message"]["content"].strip()
 
-        # 尝试解析 JSON
+        # 尝试解析 JSON 数组响应
         try:
             if reply.startswith("```"):
                 reply = reply.split("```")[1]
@@ -644,7 +651,12 @@ async def test_moderation(
                     reply = reply[4:]
                 reply = reply.strip()
 
-            parsed = json.loads(reply)
+            parsed_raw = json.loads(reply)
+            # 响应是 JSON 数组，提取第一个元素给前端展示
+            if isinstance(parsed_raw, list) and len(parsed_raw) > 0:
+                parsed = parsed_raw[0]
+            else:
+                parsed = parsed_raw
             return {
                 "success": True,
                 "raw_response": result["choices"][0]["message"]["content"],

@@ -43,20 +43,9 @@ async def create_reply(
             detail="帖子不存在"
         )
     
-    # 内容审核
+    # 检查审核是否启用，决定是否需要后续审核
     moderator = get_moderator(db)
-    moderation_result = await moderator.check(
-        content=data.content,
-        content_type="reply",
-        user_id=current_user.id
-    )
-    
-    if not moderation_result.passed:
-        db.commit()  # 保存审核日志
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"内容审核未通过：{moderation_result.reason or '包含违规内容'}"
-        )
+    needs_moderation = moderator.enabled and moderator.api_key and moderator.api_base
     
     # 获取下一个楼层号（使用 FOR UPDATE 锁住帖子行，防止并发楼层号重复）
     thread = db.query(Thread).filter(Thread.id == thread_id).with_for_update().first()
@@ -72,7 +61,8 @@ async def create_reply(
         thread_id=thread_id,
         author_id=current_user.id,
         floor_num=next_floor,
-        content=data.content
+        content=data.content,
+        moderated=not needs_moderation  # 审核开启时标记为未审核
     )
     db.add(reply)
     
@@ -272,20 +262,9 @@ async def create_sub_reply(
         # 目标本身就是主楼层
         parent = target_reply
     
-    # 内容审核
+    # 检查审核是否启用，决定是否需要后续审核
     moderator = get_moderator(db)
-    moderation_result = await moderator.check(
-        content=data.content,
-        content_type="sub_reply",
-        user_id=current_user.id
-    )
-    
-    if not moderation_result.passed:
-        db.commit()  # 保存审核日志
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"内容审核未通过：{moderation_result.reason or '包含违规内容'}"
-        )
+    needs_moderation = moderator.enabled and moderator.api_key and moderator.api_base
     
     # 检查 reply_to 是否存在
     reply_to = None
@@ -309,7 +288,8 @@ async def create_sub_reply(
         floor_num=None,  # 楼中楼没有楼层号
         content=data.content,
         parent_id=reply_id,
-        reply_to_id=data.reply_to_id
+        reply_to_id=data.reply_to_id,
+        moderated=not needs_moderation  # 审核开启时标记为未审核
     )
     db.add(sub_reply)
     

@@ -137,7 +137,7 @@ async def get_trending(
 
 
 @router.get("/search")
-def search_threads(
+async def search_threads(
     q: str = Query(..., min_length=1, max_length=100, description="搜索关键词"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=50),
@@ -149,7 +149,22 @@ def search_threads(
     搜索帖子
     
     搜索标题和内容，返回匹配的帖子列表
+    
+    Redis 缓存：仅未登录用户，TTL 300秒
     """
+    # === Redis 搜索结果缓存 ===
+    import hashlib
+    keyword_hash = hashlib.md5(q.encode()).hexdigest()[:8]
+    cache_key = f"search:{keyword_hash}:{category or 'all'}:{page}:{page_size}"
+    r = get_redis()
+    if r and not current_user:
+        try:
+            cached = await r.get(cache_key)
+            if cached:
+                return json.loads(cached)
+        except Exception as e:
+            logger.warning(f"Redis read failed for {cache_key}: {e}")
+    
     # 构建搜索条件
     search_pattern = f"%{q}%"
     
@@ -192,7 +207,7 @@ def search_threads(
         .all()
     )
     
-    return {
+    result = {
         "items": [
             {
                 "id": t.id,
@@ -217,6 +232,15 @@ def search_threads(
         "total_pages": total_pages,
         "keyword": q
     }
+    
+    # 写入 Redis 缓存（仅未登录用户）
+    if r and not current_user:
+        try:
+            await r.setex(cache_key, 300, json.dumps(result))  # TTL 300秒
+        except Exception as e:
+            logger.warning(f"Redis write failed for {cache_key}: {e}")
+    
+    return result
 
 
 def get_reply_response(reply: Reply, preview_count: int = 3, current_user_id: Optional[int] = None, blocked_user_ids: set = None, liked_reply_ids: set = None, user_levels: dict = None) -> ReplyResponse:
@@ -276,7 +300,7 @@ def get_reply_response(reply: Reply, preview_count: int = 3, current_user_id: Op
 
 
 @router.get("")
-def list_threads(
+async def list_threads(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     category: Optional[str] = Query(None, description="分类筛选: chat/deals/misc/tech/help/intro/acg"),
@@ -293,7 +317,27 @@ def list_threads(
     - **category**: 分类筛选
     - **sort**: 排序方式 (latest_reply/newest/most_replies)
     - **format**: 返回格式，text(给LLM) 或 json
+    
+    Redis 缓存：仅未登录用户，TTL 60秒
     """
+    # === Redis 帖子列表缓存 ===
+    cache_key = f"threads:list:{category or 'all'}:{sort}:{page}:{page_size}"
+    r = get_redis()
+    if r and not current_user:
+        try:
+            cached = await r.get(cache_key)
+            if cached:
+                data = json.loads(cached)
+                if format == "text":
+                    items = [ThreadListItem(**item) for item in data["items"]]
+                    text = LLMSerializer.thread_list(
+                        items, data["page"], data["total"], data["page_size"], data["total_pages"]
+                    )
+                    return PlainTextResponse(content=text)
+                return data
+        except Exception as e:
+            logger.warning(f"Redis read failed for {cache_key}: {e}")
+    
     # 构建查询
     query = db.query(Thread).options(joinedload(Thread.author))
     count_query = db.query(func.count(Thread.id))
@@ -377,6 +421,21 @@ def list_threads(
         item.author.exp = level_info["exp"]
         items.append(item)
     
+    result = {
+        "items": [item.model_dump() for item in items],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages
+    }
+    
+    # 写入 Redis 缓存（仅未登录用户）
+    if r and not current_user:
+        try:
+            await r.setex(cache_key, 60, json.dumps(result, default=str))  # TTL 60秒
+        except Exception as e:
+            logger.warning(f"Redis write failed for {cache_key}: {e}")
+    
     if format == "text":
         text = LLMSerializer.thread_list(items, page, total, page_size, total_pages)
         return PlainTextResponse(content=text)
@@ -401,31 +460,20 @@ async def create_thread(
     """
     发布新帖子
     """
-    # 内容审核
-    moderator = get_moderator(db)
-    content_to_check = f"{data.title}\n{data.content}"
-    moderation_result = await moderator.check(
-        content=content_to_check,
-        content_type="thread",
-        user_id=current_user.id
-    )
-    
-    if not moderation_result.passed:
-        db.commit()  # 保存审核日志
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"内容审核未通过：{moderation_result.reason or '包含违规内容'}"
-        )
-    
     # 验证分类
     category = data.category if data.category in THREAD_CATEGORIES else "chat"
+    
+    # 检查审核是否启用，决定是否需要后续审核
+    moderator = get_moderator(db)
+    needs_moderation = moderator.enabled and moderator.api_key and moderator.api_base
     
     thread = Thread(
         author_id=current_user.id,
         title=data.title,
         content=data.content,
         category=category,
-        like_count=0
+        like_count=0,
+        moderated=not needs_moderation  # 审核开启时标记为未审核，等待定时任务
     )
     db.add(thread)
     

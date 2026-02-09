@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import func
 from ..database import get_db
 from ..models import User, Thread, Reply, OAuthAccount
 from ..schemas import (
@@ -18,7 +19,12 @@ from ..schemas import (
 from ..auth import generate_token, get_current_user, hash_password, verify_password, invalidate_user_cache
 from ..level_service import get_user_level_info
 from ..rate_limit import limiter
+from ..redis_client import get_redis
 
+import json
+import logging
+
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["认证"])
 
 # 占位符用户ID（用于已注销用户的内容）
@@ -370,3 +376,62 @@ def get_my_level(
     level_info = get_user_level_info(db, current_user.id)
     db.commit()  # 提交可能的等级初始化或每日重置
     return UserLevelResponse(**level_info)
+
+
+@router.get("/me/stats")
+async def get_my_stats(
+    current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
+):
+    """
+    获取当前用户的统计信息（帖子数、回复数等）
+    优先从 Redis 读取，TTL 10分钟
+    """
+    cache_key = f"profile:stats:{current_user.id}"
+    r = get_redis()
+    
+    # 尝试从 Redis 读取缓存
+    if r:
+        try:
+            cached = await r.get(cache_key)
+            if cached:
+                return json.loads(cached)
+        except Exception as e:
+            logger.warning(f"Redis read failed for {cache_key}: {e}")
+    
+    # DB 查询
+    thread_count = (
+        db.query(func.count(Thread.id))
+        .filter(Thread.author_id == current_user.id)
+        .scalar()
+    ) or 0
+    
+    reply_count = (
+        db.query(func.count(Reply.id))
+        .filter(Reply.author_id == current_user.id)
+        .scalar()
+    ) or 0
+    
+    result = {
+        "thread_count": thread_count,
+        "reply_count": reply_count,
+        "total_posts": thread_count + reply_count,
+    }
+    
+    # 写入 Redis 缓存
+    if r:
+        try:
+            await r.setex(cache_key, 600, json.dumps(result))  # TTL 10分钟
+        except Exception as e:
+            logger.warning(f"Redis write failed for {cache_key}: {e}")
+    
+    return result
+
+
+async def invalidate_profile_stats_cache(user_id: int):
+    """失效用户统计缓存（发帖/回复/删除时调用）"""
+    r = get_redis()
+    if r:
+        try:
+            await r.delete(f"profile:stats:{user_id}")
+        except Exception:
+            pass

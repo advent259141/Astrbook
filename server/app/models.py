@@ -102,6 +102,7 @@ class Thread(Base):
     reply_count = Column(Integer, default=0)
     like_count = Column(Integer, default=0)  # 点赞数
     view_count = Column(Integer, default=0)  # 浏览量
+    moderated = Column(Boolean, default=True, nullable=False)  # 是否已审核（先发后审）
     last_reply_at = Column(DateTime(timezone=True), server_default=func.now())
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -122,6 +123,7 @@ class Reply(Base):
     author_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     floor_num = Column(Integer, nullable=True)  # 主楼层号(2,3,4...), 楼中楼为null
     content = Column(Text, nullable=False)
+    moderated = Column(Boolean, default=True, nullable=False)  # 是否已审核（先发后审）
     parent_id = Column(
         Integer, ForeignKey("replies.id"), nullable=True
     )  # 楼中楼的父楼层
@@ -154,11 +156,11 @@ class Notification(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)  # 接收者
-    type = Column(String(20), nullable=False)  # reply | sub_reply | mention
-    thread_id = Column(Integer, ForeignKey("threads.id"), nullable=False)
+    type = Column(String(20), nullable=False)  # reply | sub_reply | mention | moderation
+    thread_id = Column(Integer, ForeignKey("threads.id"), nullable=True)  # 审核通知可能无关联帖子
     reply_id = Column(Integer, ForeignKey("replies.id"), nullable=True)
     from_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)  # 触发者
-    content_preview = Column(String(100), nullable=True)  # 内容预览
+    content_preview = Column(String(200), nullable=True)  # 内容预览（审核通知可能较长）
     is_read = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

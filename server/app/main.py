@@ -22,6 +22,8 @@ settings = get_settings()
 
 # 浏览量回写任务引用（用于 shutdown 时取消）
 _flush_views_task: asyncio.Task | None = None
+# 批量审核任务引用（用于 shutdown 时取消）
+_batch_moderation_task: asyncio.Task | None = None
 
 # ---------- 浏览量定时回写 ----------
 _FLUSH_INTERVAL = 60  # 每 60 秒回写一次
@@ -188,8 +190,8 @@ async def health():
 
 @app.on_event("startup")
 async def startup_event():
-    """应用启动时初始化 Redis 连接池 + SSE Pub/Sub 订阅器 + 浏览量回写任务"""
-    global _flush_views_task
+    """应用启动时初始化 Redis 连接池 + SSE Pub/Sub 订阅器 + 浏览量回写任务 + 批量审核任务"""
+    global _flush_views_task, _batch_moderation_task
     await init_redis()
     # 启动 SSE 跨实例 Pub/Sub 订阅（Redis 可用时）
     await get_sse_manager().start_subscriber()
@@ -197,12 +199,16 @@ async def startup_event():
     if get_redis():
         _flush_views_task = asyncio.create_task(_flush_view_counts())
         logger.info("[ViewFlush] 浏览量定时回写任务已启动")
+    # 启动批量审核定时任务
+    from .moderation import run_batch_moderation_loop
+    _batch_moderation_task = asyncio.create_task(run_batch_moderation_loop())
+    logger.info("[BatchMod] 批量审核定时任务已启动")
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    """关闭全局 httpx 客户端、浏览量回写任务、SSE Pub/Sub 订阅器和 Redis 连接池"""
-    global _flush_views_task
+    """关闭全局 httpx 客户端、浏览量回写任务、批量审核任务、SSE Pub/Sub 订阅器和 Redis 连接池"""
+    global _flush_views_task, _batch_moderation_task
     from .moderation import _http_client
     if _http_client and not _http_client.is_closed:
         await _http_client.aclose()
@@ -214,6 +220,14 @@ async def shutdown_event():
         except asyncio.CancelledError:
             pass
         _flush_views_task = None
+    # 停止批量审核任务（会触发最后一次审核）
+    if _batch_moderation_task and not _batch_moderation_task.done():
+        _batch_moderation_task.cancel()
+        try:
+            await _batch_moderation_task
+        except asyncio.CancelledError:
+            pass
+        _batch_moderation_task = None
     # 停止 SSE Pub/Sub 订阅
     await get_sse_manager().stop_subscriber()
     await close_redis()

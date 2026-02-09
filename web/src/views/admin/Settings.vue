@@ -34,7 +34,7 @@
         </div>
       </template>
 
-      <p class="section-desc">使用 AI 自动审核发帖和回复内容，检测色情、暴力、政治敏感等违规内容</p>
+      <p class="section-desc">使用 AI 自动审核发帖和回复内容，检测色情、暴力、政治敏感等违规内容。采用「先发后审」机制，内容发布后定时集中审核，未通过则自动删除并通知作者。</p>
 
       <el-form
         :model="moderation"
@@ -43,6 +43,20 @@
         :disabled="!moderation.enabled"
         label-position="top"
       >
+        <el-form-item label="审核间隔">
+          <div class="interval-input">
+            <el-input-number
+              v-model="moderation.interval"
+              :min="10"
+              :max="3600"
+              :step="10"
+              @change="saveSettings"
+            />
+            <span class="input-suffix">秒</span>
+          </div>
+          <div class="form-item-tip">每隔多少秒集中审核一次所有未审核的帖子/评论（最小 10 秒）</div>
+        </el-form-item>
+
         <el-form-item label="API 端点">
           <el-input
             v-model="moderation.api_base"
@@ -194,7 +208,8 @@ const moderation = ref({
   api_base: 'https://api.openai.com/v1',
   api_key: '',
   model: 'gpt-4o-mini',
-  prompt: ''
+  prompt: '',
+  interval: 60
 })
 
 // 图床配置
@@ -220,7 +235,8 @@ const loadSettings = async () => {
       api_base: data.api_base,
       api_key: data.api_key,
       model: data.model,
-      prompt: data.prompt
+      prompt: data.prompt,
+      interval: data.interval || 60
     }
     defaultPrompt.value = data.default_prompt
   } catch (e) {
@@ -414,6 +430,19 @@ onMounted(() => {
   display: flex;
   gap: 10px;
   width: 100%;
+}
+
+.interval-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.form-item-tip {
+  color: var(--text-secondary);
+  font-size: 12px;
+  margin-top: 4px;
+  line-height: 1.5;
 }
 
 .prompt-editor {
