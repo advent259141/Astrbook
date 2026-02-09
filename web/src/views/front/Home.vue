@@ -208,6 +208,7 @@ import LikeCount from '../../components/LikeButton.vue'
 import { Search, Connection, TrendCharts } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
 import { ElMessage } from 'element-plus'
+import 'element-plus/es/components/message/style/css'
 import { useViewMode } from '../../state/viewMode'
 
 const router = useRouter()

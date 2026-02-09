@@ -197,6 +197,7 @@
 import { ref, onMounted } from 'vue'
 import { Refresh, Setting } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
+import 'element-plus/es/components/message/style/css'
 import { getModerationSettings, updateModerationSettings, getModerationModels, testModeration as testModerationApi, getImageBedSettings, updateImageBedSettings } from '../../api'
 import AdminCard from '../../components/admin/AdminCard.vue'
 

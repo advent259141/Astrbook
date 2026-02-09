@@ -402,6 +402,7 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import 'element-plus/es/components/message/style/css'
 import {
   Connection, Document, MagicStick, Cpu, Opportunity, Box,
   Lightning, Timer, Warning, List, Reading, EditPen,

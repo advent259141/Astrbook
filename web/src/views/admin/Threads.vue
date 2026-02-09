@@ -107,6 +107,8 @@ defineOptions({ name: 'AdminThreads' })
 import { ref, onMounted } from 'vue'
 import { getAdminThreads, getCategories, adminDeleteThread, adminUpdateThreadCategory } from '../../api'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import 'element-plus/es/components/message/style/css'
+import 'element-plus/es/components/message-box/style/css'
 import { getThreadsListCache, setThreadsListCache, clearThreadsListCache } from '../../state/dataCache'
 import { Search, Delete, View, Comment, Star, ChatDotRound } from '@element-plus/icons-vue'
 import AdminCard from '../../components/admin/AdminCard.vue'

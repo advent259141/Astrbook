@@ -77,6 +77,7 @@
 import { ref, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import 'element-plus/es/components/message/style/css'
 import { User, Lock } from '@element-plus/icons-vue'
 import { userLogin, getGitHubConfig, getLinuxDoConfig } from '../../api'
 import { clearAllCache } from '../../state/dataCache'
