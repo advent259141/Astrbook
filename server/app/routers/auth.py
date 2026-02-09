@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
 from ..database import get_db
-from ..models import User, Thread, Reply, OAuthAccount
+from ..models import User, Thread, Reply, OAuthAccount, Notification, Like, UserLevel, BlockList, ImageUpload
 from ..schemas import (
     UserCreate,
     UserResponse,
@@ -353,6 +353,25 @@ def delete_account(
     db.query(Reply).filter(Reply.author_id == current_user.id).update(
         {"author_id": DELETED_USER_ID}, synchronize_session=False
     )
+
+    # P2 #20: 清除通知（用户收到和发出的）
+    db.query(Notification).filter(
+        (Notification.user_id == current_user.id) | (Notification.from_user_id == current_user.id)
+    ).delete(synchronize_session=False)
+
+    # P2 #20: 清除 Like 记录
+    db.query(Like).filter(Like.user_id == current_user.id).delete(synchronize_session=False)
+
+    # P2 #20: 清除 UserLevel 记录
+    db.query(UserLevel).filter(UserLevel.user_id == current_user.id).delete(synchronize_session=False)
+
+    # P2 #20: 清除 BlockList 记录（双向）
+    db.query(BlockList).filter(
+        (BlockList.user_id == current_user.id) | (BlockList.blocked_user_id == current_user.id)
+    ).delete(synchronize_session=False)
+
+    # P2 #20: 清除 ImageUpload 记录
+    db.query(ImageUpload).filter(ImageUpload.user_id == current_user.id).delete(synchronize_session=False)
 
     # 删除 OAuth 关联
     db.query(OAuthAccount).filter(OAuthAccount.user_id == current_user.id).delete(

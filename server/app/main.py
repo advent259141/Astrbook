@@ -28,92 +28,83 @@ _batch_moderation_task: asyncio.Task | None = None
 # ---------- 浏览量定时回写 ----------
 _FLUSH_INTERVAL = 60  # 每 60 秒回写一次
 
+
+async def _collect_view_increments() -> dict[int, int]:
+    """从 Redis 中原子取出所有 views:* 增量（GETDEL 保证不重复计入）"""
+    r = get_redis()
+    if not r:
+        return {}
+    cursor = "0"
+    keys = []
+    while True:
+        cursor, batch = await r.scan(cursor=cursor, match="views:*", count=100)
+        keys.extend(batch)
+        if cursor == 0 or cursor == "0":
+            break
+    if not keys:
+        return {}
+    updates: dict[int, int] = {}
+    for key in keys:
+        count_str = await r.getdel(key)
+        if count_str:
+            try:
+                tid = int(key.split(":")[1])
+                updates[tid] = int(count_str)
+            except (ValueError, IndexError):
+                pass
+    return updates
+
+
+def _write_view_counts_to_db(updates: dict[int, int], label: str = "") -> None:
+    """
+    同步写入 DB —— 使用 CASE/WHEN 批量更新（一条 SQL 更新所有帖子）。
+    该函数在 asyncio.to_thread() 中调用，不会阻塞事件循环。
+    """
+    if not updates:
+        return
+    db = SessionLocal()
+    try:
+        from sqlalchemy import func as sa_func, case, literal
+        # 构建 CASE/WHEN 表达式：一条 SQL 更新所有帖子
+        case_expr = case(
+            *[(Thread.id == tid, literal(cnt)) for tid, cnt in updates.items()],
+            else_=literal(0)
+        )
+        db.query(Thread).filter(Thread.id.in_(updates.keys())).update(
+            {Thread.view_count: sa_func.coalesce(Thread.view_count, 0) + case_expr},
+            synchronize_session=False
+        )
+        db.commit()
+        logger.info(f"[ViewFlush] {label}回写 {len(updates)} 个帖子浏览量")
+    except Exception as e:
+        db.rollback()
+        logger.warning(f"[ViewFlush] {label}回写失败: {e}")
+    finally:
+        db.close()
+
+
 async def _flush_view_counts():
     """
     定时将 Redis 中累积的浏览量增量批量回写到数据库。
-    使用 GETDEL 保证原子性：取出后立即删除，不会重复计入。
+    - Redis 操作（SCAN/GETDEL）保持 await 异步调用
+    - DB 写入通过 asyncio.to_thread() 放到线程池，不阻塞事件循环
+    - UPDATE 使用 CASE/WHEN 批量更新（一条 SQL 更新所有帖子）
     """
     while True:
         try:
             await asyncio.sleep(_FLUSH_INTERVAL)
-            r = get_redis()
-            if not r:
-                continue
-            # 扫描所有 views:* 键
-            cursor = "0"
-            keys = []
-            while True:
-                cursor, batch = await r.scan(cursor=cursor, match="views:*", count=100)
-                keys.extend(batch)
-                if cursor == 0 or cursor == "0":
-                    break
-            if not keys:
-                continue
-            # 原子取出并删除
-            updates: dict[int, int] = {}
-            for key in keys:
-                count_str = await r.getdel(key)
-                if count_str:
-                    try:
-                        tid = int(key.split(":")[1])
-                        updates[tid] = int(count_str)
-                    except (ValueError, IndexError):
-                        pass
-            if not updates:
-                continue
-            # 批量写 DB
-            db = SessionLocal()
-            try:
-                from sqlalchemy import func as sa_func
-                for tid, cnt in updates.items():
-                    db.query(Thread).filter(Thread.id == tid).update(
-                        {Thread.view_count: sa_func.coalesce(Thread.view_count, 0) + cnt},
-                        synchronize_session=False
-                    )
-                db.commit()
-                logger.info(f"[ViewFlush] 回写 {len(updates)} 个帖子浏览量")
-            except Exception as e:
-                db.rollback()
-                logger.warning(f"[ViewFlush] 回写失败: {e}")
-            finally:
-                db.close()
+            updates = await _collect_view_increments()
+            if updates:
+                await asyncio.to_thread(_write_view_counts_to_db, updates, "")
         except asyncio.CancelledError:
             # shutdown 时触发最后一次回写
             logger.info("[ViewFlush] 收到停止信号，执行最后一次回写...")
-            r = get_redis()
-            if r:
-                cursor = "0"
-                keys = []
-                while True:
-                    cursor, batch = await r.scan(cursor=cursor, match="views:*", count=100)
-                    keys.extend(batch)
-                    if cursor == 0 or cursor == "0":
-                        break
-                if keys:
-                    updates = {}
-                    for key in keys:
-                        count_str = await r.getdel(key)
-                        if count_str:
-                            try:
-                                tid = int(key.split(":")[1])
-                                updates[tid] = int(count_str)
-                            except (ValueError, IndexError):
-                                pass
-                    if updates:
-                        db = SessionLocal()
-                        try:
-                            from sqlalchemy import func as sa_func
-                            for tid, cnt in updates.items():
-                                db.query(Thread).filter(Thread.id == tid).update(
-                                    {Thread.view_count: sa_func.coalesce(Thread.view_count, 0) + cnt},
-                                    synchronize_session=False
-                                )
-                            db.commit()
-                            logger.info(f"[ViewFlush] 最终回写 {len(updates)} 个帖子浏览量")
-                        except Exception:
-                            db.rollback()
-                        finally:
-                            db.close()
+            try:
+                updates = await _collect_view_increments()
+                if updates:
+                    await asyncio.to_thread(_write_view_counts_to_db, updates, "最终")
+            except Exception:
+                pass
             break
         except Exception as e:
             logger.warning(f"[ViewFlush] 异常: {e}")
@@ -133,10 +124,11 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
-# CORS 配置
+# CORS 配置 (P0 #2: allow_origins=["*"] + allow_credentials=True 不合法)
+_cors_origins = [o.strip() for o in settings.FRONTEND_URL.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins or ["http://localhost:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -171,7 +163,7 @@ if os.path.exists(FRONTEND_DIR):
 
 
 @app.get("/")
-async def root():
+def root():
     # 如果前端存在，返回 index.html
     index_path = os.path.join(FRONTEND_DIR, "index.html")
     if os.path.exists(index_path):
@@ -184,7 +176,7 @@ async def root():
 
 
 @app.get("/api/health")
-async def health():
+def health():
     return {"status": "ok"}
 
 
@@ -235,7 +227,7 @@ async def shutdown_event():
 
 # SPA 路由支持 - 处理前端路由
 @app.get("/{full_path:path}")
-async def serve_spa(full_path: str):
+def serve_spa(full_path: str):
     # API 路径不处理（所有 API 都在 /api 前缀下）
     if full_path.startswith(("api/", "docs", "openapi.json")):
         return {"detail": "Not Found"}

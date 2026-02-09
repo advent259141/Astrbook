@@ -130,8 +130,10 @@ async def github_callback(
     action = state_data["action"]
     redirect_uri = state_data["redirect_uri"]
 
-    # 用 code 换取 access_token
-    async with httpx.AsyncClient() as client:
+    # 用 code 换取 access_token（P2 #17: 复用全局 httpx client）
+    from ..moderation import get_http_client
+    client = get_http_client()
+    if True:
         token_response = await client.post(
             "https://github.com/login/oauth/access_token",
             data={
@@ -222,13 +224,12 @@ async def github_callback(
             )
         else:
             # 未绑定，创建新用户
-            # 生成唯一用户名
+            # 生成唯一用户名（P3 #27: 用 uuid 后缀一次性生成，避免循环查 DB）
+            import uuid
             base_username = f"gh_{github_username}"
             username = base_username
-            counter = 1
-            while db.query(User).filter(User.username == username).first():
-                username = f"{base_username}_{counter}"
-                counter += 1
+            if db.query(User).filter(User.username == username).first():
+                username = f"{base_username}_{uuid.uuid4().hex[:6]}"
 
             # 创建用户
             user = User(
@@ -405,28 +406,20 @@ def get_oauth_status(
     """
     获取当前用户的 OAuth 绑定状态
     """
-    github_oauth = (
+    # P3 #30: 一次查询 + Python 分组
+    oauth_accounts = (
         db.query(OAuthAccount)
-        .filter(
-            OAuthAccount.user_id == current_user.id, OAuthAccount.provider == "github"
-        )
-        .first()
+        .filter(OAuthAccount.user_id == current_user.id)
+        .all()
     )
-
-    linuxdo_oauth = (
-        db.query(OAuthAccount)
-        .filter(
-            OAuthAccount.user_id == current_user.id, OAuthAccount.provider == "linuxdo"
-        )
-        .first()
-    )
+    oauth_map = {a.provider: a for a in oauth_accounts}
 
     return OAuthStatusResponse(
-        github=OAuthAccountResponse.model_validate(github_oauth)
-        if github_oauth
+        github=OAuthAccountResponse.model_validate(oauth_map["github"])
+        if "github" in oauth_map
         else None,
-        linuxdo=OAuthAccountResponse.model_validate(linuxdo_oauth)
-        if linuxdo_oauth
+        linuxdo=OAuthAccountResponse.model_validate(oauth_map["linuxdo"])
+        if "linuxdo" in oauth_map
         else None,
     )
 
@@ -507,8 +500,10 @@ async def linuxdo_callback(
     action = state_data["action"]
     redirect_uri = state_data["redirect_uri"]
 
-    # 用 code 换取 access_token
-    async with httpx.AsyncClient() as client:
+    # 用 code 换取 access_token（P2 #17: 复用全局 httpx client）
+    from ..moderation import get_http_client
+    client = get_http_client()
+    if True:
         token_response = await client.post(
             "https://connect.linux.do/oauth2/token",
             data={
@@ -601,13 +596,12 @@ async def linuxdo_callback(
             )
         else:
             # 未绑定，创建新用户
-            # 生成唯一用户名
+            # 生成唯一用户名（P3 #27: 用 uuid 后缀一次性生成，避免循环查 DB）
+            import uuid
             base_username = f"ld_{linuxdo_username}"
             username = base_username
-            counter = 1
-            while db.query(User).filter(User.username == username).first():
-                username = f"{base_username}_{counter}"
-                counter += 1
+            if db.query(User).filter(User.username == username).first():
+                username = f"{base_username}_{uuid.uuid4().hex[:6]}"
 
             # 创建用户
             user = User(
