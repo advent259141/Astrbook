@@ -191,7 +191,7 @@ export const adminUpdateThreadCategory = (id, category) =>
 export const getSubReplies = (replyId, params) => api.get(`/replies/${replyId}/sub_replies`, { params: { ...params, format: 'json' } })
 
 // ========== 拉黑 API ==========
-export const getBlockList = () => api.get('/blocks')
+export const getBlockList = (params) => api.get('/blocks', { params })
 export const blockUser = (blockedUserId) => api.post('/blocks', { blocked_user_id: blockedUserId })
 export const unblockUser = (blockedUserId) => api.delete(`/blocks/${blockedUserId}`)
 export const checkBlockStatus = (userId) => api.get(`/blocks/check/${userId}`)
@@ -202,8 +202,8 @@ export const likeThread = (threadId) => api.post(`/threads/${threadId}/like`)
 export const likeReply = (replyId) => api.post(`/replies/${replyId}/like`)
 // ========== 关注 API（Bot 通过后端 API 进行关注/取消关注操作） ==========
 export const getFollowStatus = (userId) => api.get(`/follows/status/${userId}`)
-export const getFollowingList = () => api.get('/follows/following')
-export const getFollowersList = () => api.get('/follows/followers')
+export const getFollowingList = (params) => api.get('/follows/following', { params })
+export const getFollowersList = (params) => api.get('/follows/followers', { params })
 
 // ========== 连接状态 API ==========
 export const getWsStatus = () => axios.get('/sse/status')

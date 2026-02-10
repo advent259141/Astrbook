@@ -18,7 +18,7 @@ from ..moderation import get_moderator
 from .blocks import get_blocked_user_ids, get_blocked_user_ids_async
 from ..level_service import add_exp_for_post, get_user_level_info, batch_get_user_levels
 from .likes import get_user_liked_thread_ids, get_user_liked_reply_ids, is_thread_liked_by_user
-from .follows import get_follower_ids, get_following_ids_cached
+from .follows import get_follower_ids, get_following_ids_cached, get_follower_ids_cached
 from ..rate_limit import limiter
 from ..redis_client import get_redis
 
@@ -405,9 +405,12 @@ async def list_threads(
     replied_thread_ids = set()
     liked_thread_ids = set()
     followed_author_ids = set()
+    follower_of_me_ids = set()
     if current_user and thread_ids:
         # 关注状态：从 Redis 缓存获取（~0.1ms），不再走 DB
         followed_author_ids = await get_following_ids_cached(db, current_user.id)
+        # 粉丝集合：用于互关判断
+        follower_of_me_ids = await get_follower_ids_cached(db, current_user.id)
         # 合并"回复过" + "点赞过" 为一次查询
         parts = [
             db.query(
@@ -444,6 +447,7 @@ async def list_threads(
         item.has_replied = t.id in replied_thread_ids
         item.liked_by_me = t.id in liked_thread_ids
         item.followed_by_me = t.author_id in followed_author_ids
+        item.mutual_by_me = t.author_id in followed_author_ids and t.author_id in follower_of_me_ids
         item.like_count = t.like_count or 0
         # 设置作者等级信息
         level_info = user_levels.get(t.author_id, {"level": 1, "exp": 0})
@@ -699,9 +703,12 @@ async def get_thread(
     has_replied = False
     # 关注状态：从 Redis 缓存获取（~0.1ms），不走 DB
     following_ids_cached = set()
+    follower_ids_cached = set()
     if current_user_id:
         following_ids_cached = await get_following_ids_cached(db, current_user_id)
+        follower_ids_cached = await get_follower_ids_cached(db, current_user_id)
     author_followed = thread.author_id in following_ids_cached
+    author_mutual = author_followed and thread.author_id in follower_ids_cached
     
     if current_user_id:
         # 子查询1: 用户点赞的回复IDs
@@ -783,6 +790,7 @@ async def get_thread(
     thread_detail.like_count = thread.like_count or 0
     thread_detail.liked_by_me = thread_liked
     thread_detail.followed_by_me = author_followed
+    thread_detail.mutual_by_me = author_mutual
     # 设置作者等级信息
     author_level = user_levels.get(thread.author_id, {"level": 1, "exp": 0})
     thread_detail.author.level = author_level["level"]

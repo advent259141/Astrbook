@@ -1,7 +1,8 @@
 """关注功能路由"""
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
+import math
 from ..database import get_db
 from ..models import User, Follow
 from ..schemas import (
@@ -60,12 +61,53 @@ async def get_following_ids_cached(db: Session, user_id: int) -> set:
     return ids
 
 
-async def invalidate_following_cache(user_id: int):
-    """关注/取消关注时失效该用户的缓存"""
+async def get_follower_ids_cached(db: Session, user_id: int) -> set:
+    """获取关注了当前用户的所有用户 ID 集合（谁关注了我），优先走 Redis Set 缓存（TTL 120s）"""
     r = get_redis()
     if r:
         try:
-            await r.delete(f"following:{user_id}")
+            key = f"followers:{user_id}"
+            cached = await r.smembers(key)
+            if cached:
+                return {int(uid) for uid in cached if uid != b"__empty__" and uid != "__empty__"}
+        except Exception:
+            pass  # 降级到 DB
+
+    # DB 回源
+    rows = (
+        db.query(Follow.follower_id)
+        .filter(Follow.following_id == user_id)
+        .all()
+    )
+    ids = {row[0] for row in rows}
+
+    # 回写 Redis
+    if r:
+        try:
+            key = f"followers:{user_id}"
+            pipe = r.pipeline()
+            await pipe.delete(key)
+            if ids:
+                await pipe.sadd(key, *[str(uid) for uid in ids])
+            else:
+                await pipe.sadd(key, "__empty__")
+            await pipe.expire(key, 120)
+            await pipe.execute()
+        except Exception:
+            pass
+
+    return ids
+
+
+async def invalidate_following_cache(user_id: int, target_id: int = None):
+    """关注/取消关注时失效双方的缓存"""
+    r = get_redis()
+    if r:
+        try:
+            keys = [f"following:{user_id}"]
+            if target_id:
+                keys.append(f"followers:{target_id}")
+            await r.delete(*keys)
         except Exception:
             pass
 
@@ -129,7 +171,7 @@ async def follow_user(
     db.commit()
 
     # 失效 Redis 缓存
-    await invalidate_following_cache(current_user.id)
+    await invalidate_following_cache(current_user.id, data.following_id)
 
     # 通知被关注的用户
     from .notifications import create_notification
@@ -174,7 +216,7 @@ async def unfollow_user(
     db.commit()
 
     # 失效 Redis 缓存
-    await invalidate_following_cache(current_user.id)
+    await invalidate_following_cache(current_user.id, following_id)
 
     logger.info(f"User {current_user.id} unfollowed user {following_id}")
 
@@ -188,13 +230,21 @@ def get_follow_status(
     current_user: User = Depends(get_current_user)
 ):
     """
-    获取对某用户的关注状态（是否关注、粉丝数、关注数）
+    获取对某用户的关注状态（是否关注、是否互关、粉丝数、关注数）
     """
     # 检查当前用户是否关注了目标用户
     is_following = db.query(Follow).filter(
         Follow.follower_id == current_user.id,
         Follow.following_id == user_id
     ).first() is not None
+
+    # 检查目标用户是否也关注了当前用户（互关）
+    is_mutual = False
+    if is_following:
+        is_mutual = db.query(Follow).filter(
+            Follow.follower_id == user_id,
+            Follow.following_id == current_user.id
+        ).first() is not None
 
     # 粉丝数
     follower_count = db.query(func.count(Follow.id)).filter(
@@ -208,6 +258,7 @@ def get_follow_status(
 
     return FollowStatusResponse(
         is_following=is_following,
+        is_mutual=is_mutual,
         follower_count=follower_count,
         following_count=following_count
     )
@@ -215,17 +266,28 @@ def get_follow_status(
 
 @router.get("/following", response_model=FollowListResponse)
 def get_following_list(
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(5, ge=1, le=20, description="每页数量"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
-    获取当前用户的关注列表（我关注了谁）
+    获取当前用户的关注列表（我关注了谁），支持分页和互关标识
     """
+    # 总数
+    total = db.query(func.count(Follow.id)).filter(
+        Follow.follower_id == current_user.id
+    ).scalar() or 0
+    total_pages = max(1, math.ceil(total / page_size))
+
+    # 分页查询
     follows = (
         db.query(Follow)
         .options(joinedload(Follow.following))
         .filter(Follow.follower_id == current_user.id)
         .order_by(Follow.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
         .all()
     )
 
@@ -233,31 +295,59 @@ def get_following_list(
     user_ids = [f.following_id for f in follows]
     levels = batch_get_user_levels(db, user_ids) if user_ids else {}
 
+    # 批量查询互关状态：哪些人也关注了我
+    mutual_ids = set()
+    if user_ids:
+        mutual_rows = (
+            db.query(Follow.follower_id)
+            .filter(
+                Follow.follower_id.in_(user_ids),
+                Follow.following_id == current_user.id
+            )
+            .all()
+        )
+        mutual_ids = {row[0] for row in mutual_rows}
+
     items = [
         FollowedUserResponse(
             id=f.id,
             user=_user_to_public(f.following, levels),
+            is_mutual=f.following_id in mutual_ids,
             created_at=f.created_at
         )
         for f in follows
     ]
 
-    return FollowListResponse(items=items, total=len(items))
+    return FollowListResponse(
+        items=items, total=total,
+        page=page, page_size=page_size, total_pages=total_pages
+    )
 
 
 @router.get("/followers", response_model=FollowListResponse)
 def get_followers_list(
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(5, ge=1, le=20, description="每页数量"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
-    获取当前用户的粉丝列表（谁关注了我）
+    获取当前用户的粉丝列表（谁关注了我），支持分页和互关标识
     """
+    # 总数
+    total = db.query(func.count(Follow.id)).filter(
+        Follow.following_id == current_user.id
+    ).scalar() or 0
+    total_pages = max(1, math.ceil(total / page_size))
+
+    # 分页查询
     follows = (
         db.query(Follow)
         .options(joinedload(Follow.follower))
         .filter(Follow.following_id == current_user.id)
         .order_by(Follow.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
         .all()
     )
 
@@ -265,16 +355,33 @@ def get_followers_list(
     user_ids = [f.follower_id for f in follows]
     levels = batch_get_user_levels(db, user_ids) if user_ids else {}
 
+    # 批量查询互关状态：我是否也关注了这些粉丝
+    mutual_ids = set()
+    if user_ids:
+        mutual_rows = (
+            db.query(Follow.following_id)
+            .filter(
+                Follow.follower_id == current_user.id,
+                Follow.following_id.in_(user_ids)
+            )
+            .all()
+        )
+        mutual_ids = {row[0] for row in mutual_rows}
+
     items = [
         FollowedUserResponse(
             id=f.id,
             user=_user_to_public(f.follower, levels),
+            is_mutual=f.follower_id in mutual_ids,
             created_at=f.created_at
         )
         for f in follows
     ]
 
-    return FollowListResponse(items=items, total=len(items))
+    return FollowListResponse(
+        items=items, total=total,
+        page=page, page_size=page_size, total_pages=total_pages
+    )
 
 
 def get_follower_ids(db: Session, user_id: int) -> list[int]:

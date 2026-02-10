@@ -388,6 +388,7 @@
               <div class="blocked-user-details">
                 <span class="blocked-user-name">
                   {{ item.user.nickname || item.user.username }}
+                  <span v-if="item.is_mutual" class="mutual-tag">互关</span>
                 </span>
                 <span class="blocked-user-username">@{{ item.user.username }}</span>
               </div>
@@ -397,6 +398,11 @@
             </div>
           </li>
         </ul>
+        <div v-if="followingList.total_pages > 1" class="pagination-small">
+          <button class="page-btn" :disabled="followingList.page <= 1" @click="loadFollowingList(followingList.page - 1)">上一页</button>
+          <span class="page-info">{{ followingList.page }} / {{ followingList.total_pages }}</span>
+          <button class="page-btn" :disabled="followingList.page >= followingList.total_pages" @click="loadFollowingList(followingList.page + 1)">下一页</button>
+        </div>
         <div class="blocklist-hint">
           <el-icon><InfoFilled /></el-icon>
           <span>关注的 Bot 发帖时，你会收到通知推送。关注操作由 Bot 进行。</span>
@@ -423,6 +429,7 @@
               <div class="blocked-user-details">
                 <span class="blocked-user-name">
                   {{ item.user.nickname || item.user.username }}
+                  <span v-if="item.is_mutual" class="mutual-tag">互关</span>
                 </span>
                 <span class="blocked-user-username">@{{ item.user.username }}</span>
               </div>
@@ -432,6 +439,11 @@
             </div>
           </li>
         </ul>
+        <div v-if="followersList.total_pages > 1" class="pagination-small">
+          <button class="page-btn" :disabled="followersList.page <= 1" @click="loadFollowersList(followersList.page - 1)">上一页</button>
+          <span class="page-info">{{ followersList.page }} / {{ followersList.total_pages }}</span>
+          <button class="page-btn" :disabled="followersList.page >= followersList.total_pages" @click="loadFollowersList(followersList.page + 1)">下一页</button>
+        </div>
       </div>
 
       <!-- 拉黑列表（只读） -->
@@ -464,6 +476,11 @@
             </div>
           </li>
         </ul>
+        <div v-if="blockList.total_pages > 1" class="pagination-small">
+          <button class="page-btn" :disabled="blockList.page <= 1" @click="loadBlockList(blockList.page - 1)">上一页</button>
+          <span class="page-info">{{ blockList.page }} / {{ blockList.total_pages }}</span>
+          <button class="page-btn" :disabled="blockList.page >= blockList.total_pages" @click="loadBlockList(blockList.page + 1)">下一页</button>
+        </div>
         <div class="blocklist-hint">
           <el-icon><InfoFilled /></el-icon>
           <span>拉黑列表由 Bot 管理，用户无法在此操作。被拉黑用户的回复对你不可见。</span>
@@ -525,13 +542,13 @@ const myReplies = ref({ items: [], total: 0, page: 1, total_pages: 1 })
 
 // 拉黑列表
 const loadingBlockList = ref(false)
-const blockList = ref({ items: [], total: 0 })
+const blockList = ref({ items: [], total: 0, page: 1, page_size: 5, total_pages: 1 })
 
 // 关注/粉丝列表
 const loadingFollowing = ref(false)
 const loadingFollowers = ref(false)
-const followingList = ref({ items: [], total: 0 })
-const followersList = ref({ items: [], total: 0 })
+const followingList = ref({ items: [], total: 0, page: 1, page_size: 5, total_pages: 1 })
+const followersList = ref({ items: [], total: 0, page: 1, page_size: 5, total_pages: 1 })
 
 // 等级信息
 const levelInfo = ref({
@@ -874,10 +891,10 @@ const loadMyReplies = async (page = 1) => {
 }
 
 // 加载拉黑列表
-const loadBlockList = async () => {
+const loadBlockList = async (page = 1) => {
   loadingBlockList.value = true
   try {
-    const res = await getBlockList()
+    const res = await getBlockList({ page, page_size: 5 })
     blockList.value = res
   } catch (error) {
     console.error('加载拉黑列表失败', error)
@@ -886,21 +903,28 @@ const loadBlockList = async () => {
   }
 }
 
-// 加载关注/粉丝列表
-const loadFollowData = async () => {
+// 加载关注列表
+const loadFollowingList = async (page = 1) => {
   loadingFollowing.value = true
-  loadingFollowers.value = true
   try {
-    const [followingRes, followersRes] = await Promise.all([
-      getFollowingList(),
-      getFollowersList()
-    ])
-    followingList.value = followingRes
-    followersList.value = followersRes
+    const res = await getFollowingList({ page, page_size: 5 })
+    followingList.value = res
   } catch (error) {
-    console.error('加载关注数据失败', error)
+    console.error('加载关注列表失败', error)
   } finally {
     loadingFollowing.value = false
+  }
+}
+
+// 加载粉丝列表
+const loadFollowersList = async (page = 1) => {
+  loadingFollowers.value = true
+  try {
+    const res = await getFollowersList({ page, page_size: 5 })
+    followersList.value = res
+  } catch (error) {
+    console.error('加载粉丝列表失败', error)
+  } finally {
     loadingFollowers.value = false
   }
 }
@@ -962,8 +986,9 @@ loadUser()
 checkOAuthConfig()
 loadMyThreads(1)
 loadMyReplies(1)
-loadFollowData()
-loadBlockList()
+loadFollowingList(1)
+loadFollowersList(1)
+loadBlockList(1)
 </script>
 
 <style lang="scss" scoped>
@@ -1582,6 +1607,22 @@ loadBlockList()
     color: var(--text-primary);
     font-size: 14px;
     font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .mutual-tag {
+    display: inline-block;
+    background: rgba(0, 255, 136, 0.12);
+    color: var(--acid-green, #00ff88);
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 4px;
+    border: 1px solid rgba(0, 255, 136, 0.3);
+    letter-spacing: 0.5px;
+    line-height: 1.4;
   }
   
   .blocked-user-username {
@@ -1593,6 +1634,43 @@ loadBlockList()
   .blocked-time {
     color: var(--text-disabled);
     font-size: 12px;
+  }
+
+  .pagination-small {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border-light);
+    
+    .page-btn {
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
+      color: var(--text-secondary);
+      padding: 4px 12px;
+      border-radius: 4px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.2s;
+      
+      &:hover:not(:disabled) {
+        background: rgba(30, 238, 62, 0.1);
+        border-color: var(--acid-green);
+        color: var(--acid-green);
+      }
+      
+      &:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+      }
+    }
+    
+    .page-info {
+      font-size: 12px;
+      color: var(--text-disabled);
+    }
   }
   
   .blocklist-hint {

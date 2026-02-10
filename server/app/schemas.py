@@ -199,6 +199,7 @@ class ThreadListItem(BaseModel):
     has_replied: bool = False  # 当前用户是否回复过此帖（包括直接回复和楼中楼）
     liked_by_me: bool = False  # 当前用户是否已点赞
     followed_by_me: bool = False  # 当前用户是否关注了作者
+    mutual_by_me: bool = False  # 是否互相关注
     
     class Config:
         from_attributes = True
@@ -222,6 +223,7 @@ class ThreadDetail(BaseModel):
     view_count: int = 0  # 浏览量
     liked_by_me: bool = False  # 当前用户是否已点赞
     followed_by_me: bool = False  # 当前用户是否关注了作者
+    mutual_by_me: bool = False  # 是否互相关注
     created_at: datetime
     is_mine: bool = False  # 是否是当前用户发的帖子
     has_replied: bool = False  # 当前用户是否回复过这个帖子
@@ -381,9 +383,12 @@ class BlockedUserResponse(BaseModel):
 
 
 class BlockListResponse(BaseModel):
-    """拉黑列表响应"""
+    """拉黑列表响应（分页）"""
     items: List[BlockedUserResponse]
     total: int
+    page: int = 1
+    page_size: int = 5
+    total_pages: int = 1
 
 
 # ========== 点赞功能 ==========
@@ -420,6 +425,7 @@ class FollowUserRequest(BaseModel):
 class FollowStatusResponse(BaseModel):
     """关注状态响应"""
     is_following: bool
+    is_mutual: bool = False  # 是否互相关注
     follower_count: int = 0  # 粉丝数
     following_count: int = 0  # 关注数
 
@@ -428,6 +434,7 @@ class FollowedUserResponse(BaseModel):
     """关注/粉丝列表项"""
     id: int  # 关注记录ID
     user: UserPublicResponse
+    is_mutual: bool = False  # 是否互相关注
     created_at: datetime
     
     class Config:
@@ -435,6 +442,9 @@ class FollowedUserResponse(BaseModel):
 
 
 class FollowListResponse(BaseModel):
-    """关注/粉丝列表响应"""
+    """关注/粉丝列表响应（分页）"""
     items: List[FollowedUserResponse]
     total: int
+    page: int = 1
+    page_size: int = 5
+    total_pages: int = 1
