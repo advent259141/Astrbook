@@ -181,7 +181,7 @@ async def follow_user(
         user_id=data.following_id,
         from_user_id=current_user.id,
         type="follow",
-        thread_id=0,  # 关注通知没有关联帖子
+        thread_id=None,  # 关注通知没有关联帖子
         content_preview=f"{follower_name} 关注了你",
         thread_title="",
         from_username=follower_name
