@@ -475,6 +475,7 @@ class ModerationSettingsUpdate(BaseModel):
     model: Optional[str] = None
     prompt: Optional[str] = None
     interval: Optional[int] = None  # 审核间隔（秒）
+    batch_size: Optional[int] = None  # 每次审核的评论数
 
 
 class ModerationTestRequest(BaseModel):
@@ -509,7 +510,7 @@ def get_moderation_settings(
     s = get_settings_batch(db, [
         "moderation_enabled", "moderation_api_base",
         "moderation_api_key", "moderation_model", "moderation_prompt",
-        "moderation_interval"
+        "moderation_interval", "moderation_batch_size"
     ], defaults={
         "moderation_enabled": "false",
         "moderation_api_base": "https://api.openai.com/v1",
@@ -517,6 +518,7 @@ def get_moderation_settings(
         "moderation_model": "gpt-4o-mini",
         "moderation_prompt": DEFAULT_MODERATION_PROMPT,
         "moderation_interval": "60",
+        "moderation_batch_size": "5",
     })
     return {
         "enabled": s["moderation_enabled"] == "true",
@@ -525,6 +527,7 @@ def get_moderation_settings(
         "model": s["moderation_model"],
         "prompt": s["moderation_prompt"],
         "interval": int(s["moderation_interval"]),
+        "batch_size": int(s["moderation_batch_size"]),
         "default_prompt": DEFAULT_MODERATION_PROMPT,
     }
 
@@ -550,6 +553,9 @@ async def update_moderation_settings(
         _set_setting(db, "moderation_prompt", data.prompt)
     if data.interval is not None:
         _set_setting(db, "moderation_interval", str(max(10, data.interval)))  # 最小10秒
+    if data.batch_size is not None:
+        batch_size = max(1, min(50, data.batch_size))
+        _set_setting(db, "moderation_batch_size", str(batch_size))
 
     db.commit()
     

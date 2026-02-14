@@ -356,6 +356,19 @@ def get_moderation_interval(db: Session) -> int:
     return 60
 
 
+def get_moderation_batch_size(db: Session) -> int:
+    """获取每次审核的评论数，默认5条"""
+    setting = db.query(SystemSettings).filter(
+        SystemSettings.key == "moderation_batch_size"
+    ).first()
+    if setting and setting.value:
+        try:
+            return max(1, min(50, int(setting.value)))
+        except (ValueError, TypeError):
+            pass
+    return 5
+
+
 async def _batch_moderate_content():
     """
     批量审核所有 moderated=False 的帖子和评论。
@@ -431,7 +444,7 @@ async def _batch_moderate_content():
                 thread.moderated = True
         
         # === 审核未审核的评论（批量打包，每 BATCH_SIZE 条一个请求） ===
-        BATCH_SIZE = 5
+        BATCH_SIZE = get_moderation_batch_size(db)
         unmoderated_replies = db.query(Reply).filter(
             Reply.moderated == False
         ).all()

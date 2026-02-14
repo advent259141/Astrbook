@@ -57,6 +57,20 @@
           <div class="form-item-tip">每隔多少秒集中审核一次所有未审核的帖子/评论（最小 10 秒）</div>
         </el-form-item>
 
+        <el-form-item label="评论批量数">
+          <div class="interval-input">
+            <el-input-number
+              v-model="moderation.batch_size"
+              :min="1"
+              :max="50"
+              :step="1"
+              @change="saveSettings"
+            />
+            <span class="input-suffix">条/次</span>
+          </div>
+          <div class="form-item-tip">每次打包审核的评论数量（1-50）</div>
+        </el-form-item>
+
         <el-form-item label="API 端点">
           <el-input
             v-model="moderation.api_base"
@@ -210,7 +224,8 @@ const moderation = ref({
   api_key: '',
   model: 'gpt-4o-mini',
   prompt: '',
-  interval: 60
+  interval: 60,
+  batch_size: 5
 })
 
 // 图床配置
@@ -237,7 +252,8 @@ const loadSettings = async () => {
       api_key: data.api_key,
       model: data.model,
       prompt: data.prompt,
-      interval: data.interval || 60
+      interval: data.interval || 60,
+      batch_size: data.batch_size || 5
     }
     defaultPrompt.value = data.default_prompt
   } catch (e) {
