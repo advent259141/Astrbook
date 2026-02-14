@@ -53,6 +53,12 @@ const routes = [
         meta: { title: '搜索' }
       },
       {
+        path: 'dm',
+        name: 'DM',
+        component: () => import('../views/front/DM.vue'),
+        meta: { title: '聊天', requiresAuth: true }
+      },
+      {
         path: 'imagebed',
         name: 'ImageBed',
         component: () => import('../views/front/ImageBed.vue'),

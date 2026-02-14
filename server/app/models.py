@@ -318,3 +318,84 @@ class Follow(Base):
         Index("ix_follow_unique", "follower_id", "following_id", unique=True),
         Index("ix_follow_following", "following_id"),  # 查粉丝列表用
     )
+
+
+class DMConversation(Base):
+    """Direct message conversation (1v1)."""
+
+    __tablename__ = "dm_conversations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_low_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    user_high_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+
+    message_count = Column(Integer, default=0, nullable=False)
+
+    last_message_id = Column(Integer, nullable=True)
+    last_message_sender_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    last_message_preview = Column(String(200), nullable=True)
+    last_message_at = Column(DateTime(timezone=True), nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    user_low = relationship("User", foreign_keys=[user_low_id])
+    user_high = relationship("User", foreign_keys=[user_high_id])
+    created_by = relationship("User", foreign_keys=[created_by_id])
+    last_message_sender = relationship("User", foreign_keys=[last_message_sender_id])
+
+    __table_args__ = (
+        Index("ix_dm_conv_pair_unique", "user_low_id", "user_high_id", unique=True),
+        Index("ix_dm_conv_low_last", "user_low_id", "last_message_at"),
+        Index("ix_dm_conv_high_last", "user_high_id", "last_message_at"),
+    )
+
+
+class DMMessage(Base):
+    """Direct message."""
+
+    __tablename__ = "dm_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    conversation_id = Column(Integer, ForeignKey("dm_conversations.id"), nullable=False)
+    sender_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    content = Column(Text, nullable=False)
+    client_msg_id = Column(String(64), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    conversation = relationship("DMConversation")
+    sender = relationship("User")
+
+    __table_args__ = (
+        Index("ix_dm_msg_conv_id", "conversation_id", "id"),
+        Index("ix_dm_msg_sender_created", "sender_id", "created_at"),
+        Index(
+            "ix_dm_msg_client_dedupe",
+            "conversation_id",
+            "sender_id",
+            "client_msg_id",
+            unique=True,
+            postgresql_where=(client_msg_id.isnot(None)),  # 部分索引：只对非NULL值去重
+        ),
+    )
+
+
+class DMRead(Base):
+    """Per-user read cursor for a conversation."""
+
+    __tablename__ = "dm_reads"
+
+    conversation_id = Column(
+        Integer, ForeignKey("dm_conversations.id"), primary_key=True
+    )
+    user_id = Column(Integer, ForeignKey("users.id"), primary_key=True)
+    last_read_message_id = Column(Integer, default=0, nullable=False)
+    last_read_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    conversation = relationship("DMConversation")
+    user = relationship("User")
+
+    __table_args__ = (
+        Index("ix_dm_read_user", "user_id"),
+    )

@@ -205,6 +205,20 @@ export const getFollowStatus = (userId) => api.get(`/follows/status/${userId}`)
 export const getFollowingList = (params) => api.get('/follows/following', { params })
 export const getFollowersList = (params) => api.get('/follows/followers', { params })
 
+// ========== 私聊 API ==========
+export const getDmConversations = (params) => api.get('/dm', { params })
+export const getDmMessages = (targetUserId, params = {}) =>
+  api.get('/dm/messages', { params: { ...params, target_user_id: targetUserId } })
+export const sendDmMessage = (targetUserId, data) =>
+  api.post('/dm/messages', data, { params: { target_user_id: targetUserId } })
+export const readDmConversation = (targetUserId, lastReadMessageId = null) =>
+  api.post(
+    '/dm/read',
+    lastReadMessageId ? { last_read_message_id: lastReadMessageId } : {},
+    { params: { target_user_id: targetUserId } }
+  )
+export const getDmUnreadCount = () => api.get('/dm/unread-count')
+
 // ========== 连接状态 API ==========
 export const getWsStatus = () => axios.get('/sse/status')
 

@@ -448,3 +448,55 @@ class FollowListResponse(BaseModel):
     page: int = 1
     page_size: int = 5
     total_pages: int = 1
+
+
+# ========== 私聊功能 ==========
+
+class DMMessageCreateRequest(BaseModel):
+    """发送私聊消息请求"""
+    content: str = Field(..., min_length=1, max_length=5000, description="消息内容")
+    client_msg_id: Optional[str] = Field(None, max_length=64, description="客户端消息ID，用于防重复")
+
+
+class DMMessageResponse(BaseModel):
+    """私聊消息响应"""
+    id: int
+    conversation_id: int
+    sender: UserPublicResponse
+    content: str
+    client_msg_id: Optional[str] = None
+    is_mine: bool
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+class DMConversationResponse(BaseModel):
+    """私聊会话响应"""
+    id: int
+    peer: UserPublicResponse  # 对方用户信息
+    message_count: int
+    last_message_id: Optional[int] = None
+    last_message_sender_id: Optional[int] = None
+    last_message_preview: Optional[str] = None
+    last_message_at: Optional[datetime] = None
+    unread_count: int = 0
+    is_mutual_follow: bool = False
+    is_blocked: bool = False
+    can_send: bool = True
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+class DMReadRequest(BaseModel):
+    """标记私聊已读请求"""
+    last_read_message_id: Optional[int] = Field(None, description="标记到哪条消息，不提供则标记到最新")
+
+
+class DMUnreadCountResponse(BaseModel):
+    """私聊未读统计响应"""
+    unread: int = Field(..., description="未读消息总数")
+    conversations_with_unread: int = Field(..., description="有未读消息的会话数")

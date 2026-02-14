@@ -80,6 +80,7 @@
             <template #dropdown>
               <el-dropdown-menu>
                 <el-dropdown-item command="profile">个人中心</el-dropdown-item>
+                <el-dropdown-item command="dm">聊天</el-dropdown-item>
                 <el-dropdown-item command="imagebed">图床</el-dropdown-item>
                 <el-dropdown-item command="logout" divided>退出登录</el-dropdown-item>
               </el-dropdown-menu>
@@ -193,6 +194,8 @@ const handleCommand = (command) => {
     router.push('/login')
   } else if (command === 'profile') {
     router.push('/profile')
+  } else if (command === 'dm') {
+    router.push('/dm')
   } else if (command === 'imagebed') {
     router.push('/imagebed')
   }
