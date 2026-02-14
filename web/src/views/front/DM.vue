@@ -30,7 +30,13 @@
         </div>
 
         <div v-if="listLoading" class="list-loading">
-          <el-skeleton :rows="6" animated />
+          <div class="skeleton-item" v-for="i in 6" :key="i">
+            <div class="skeleton-avatar"></div>
+            <div class="skeleton-content">
+              <div class="skeleton-name"></div>
+              <div class="skeleton-preview"></div>
+            </div>
+          </div>
         </div>
 
         <div v-else-if="filteredConversations.length === 0" class="list-empty">
@@ -91,7 +97,10 @@
           </div>
 
           <div v-if="messageLoading && messages.length === 0" class="message-loading">
-            <el-skeleton :rows="8" animated />
+            <div class="skeleton-message" v-for="i in 8" :key="i" :class="{ 'skeleton-mine': i % 3 === 0 }">
+              <div class="skeleton-msg-avatar"></div>
+              <div class="skeleton-msg-bubble"></div>
+            </div>
           </div>
 
           <template v-else>
@@ -628,7 +637,62 @@ onBeforeUnmount(() => {
   }
 }
 
-.list-loading,
+.list-loading {
+  padding: 0 8px;
+}
+
+.skeleton-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  margin-bottom: 4px;
+  border-radius: 12px;
+}
+
+.skeleton-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: linear-gradient(90deg, var(--bg-tertiary) 25%, var(--bg-elevated) 50%, var(--bg-tertiary) 75%);
+  background-size: 200% 100%;
+  animation: skeleton-loading 1.5s ease-in-out infinite;
+}
+
+.skeleton-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.skeleton-name {
+  width: 60%;
+  height: 16px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--bg-tertiary) 25%, var(--bg-elevated) 50%, var(--bg-tertiary) 75%);
+  background-size: 200% 100%;
+  animation: skeleton-loading 1.5s ease-in-out infinite;
+  margin-bottom: 8px;
+}
+
+.skeleton-preview {
+  width: 85%;
+  height: 14px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--bg-tertiary) 25%, var(--bg-elevated) 50%, var(--bg-tertiary) 75%);
+  background-size: 200% 100%;
+  animation: skeleton-loading 1.5s ease-in-out infinite;
+  animation-delay: 0.1s;
+}
+
+@keyframes skeleton-loading {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
 .list-empty {
   margin: 12px;
   color: var(--text-secondary);
@@ -750,9 +814,7 @@ onBeforeUnmount(() => {
   flex: 1;
   overflow-y: auto;
   padding: 14px 16px 20px;
-  background:
-    radial-gradient(circle at 1px 1px, var(--border-light) 1px, transparent 0) 0 0 / 18px 18px,
-    linear-gradient(180deg, var(--bg-primary), var(--bg-secondary));
+  background: linear-gradient(180deg, var(--bg-primary), var(--bg-secondary));
 }
 
 .load-more-wrap {
@@ -774,6 +836,45 @@ onBeforeUnmount(() => {
     opacity: 0.7;
     cursor: default;
   }
+}
+
+.message-loading {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.skeleton-message {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  max-width: 70%;
+
+  &.skeleton-mine {
+    margin-left: auto;
+    flex-direction: row-reverse;
+  }
+}
+
+.skeleton-msg-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: linear-gradient(90deg, var(--bg-tertiary) 25%, var(--bg-elevated) 50%, var(--bg-tertiary) 75%);
+  background-size: 200% 100%;
+  animation: skeleton-loading 1.5s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+.skeleton-msg-bubble {
+  height: 52px;
+  width: 100%;
+  min-width: 180px;
+  border-radius: 14px;
+  background: linear-gradient(90deg, var(--bg-tertiary) 25%, var(--bg-elevated) 50%, var(--bg-tertiary) 75%);
+  background-size: 200% 100%;
+  animation: skeleton-loading 1.5s ease-in-out infinite;
+  animation-delay: 0.15s;
 }
 
 .message-list {
