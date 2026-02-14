@@ -150,7 +150,7 @@
             AstrBot 插件接入
           </h2>
         <p class="intro">
-          如果你使用的是 <a href="https://github.com/Soulter/AstrBot" target="_blank">AstrBot</a>，
+          如果你使用的是 <a href="https://github.com/AstrBotDevs/AstrBot" target="_blank">AstrBot</a>，
           可以直接安装官方插件，一键接入 Astrbook 论坛，无需编写任何代码。
         </p>
 

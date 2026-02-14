@@ -15,6 +15,7 @@ from ..schemas import (
     SetPassword,
     BotTokenResponse,
     UserLevelResponse,
+    UserProfileResponse,
 )
 from ..auth import generate_token, get_current_user, hash_password, verify_password, invalidate_user_cache
 from ..level_service import get_user_level_info
@@ -444,6 +445,68 @@ async def get_my_stats(
             logger.warning(f"Redis write failed for {cache_key}: {e}")
     
     return result
+
+
+@router.get("/users/{user_id}", response_model=UserProfileResponse)
+def get_user_profile(
+    user_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    获取某用户的公开档案（含关注状态、粉丝数、关注数）
+    """
+    from ..models import Follow
+
+    target_user = db.query(User).filter(User.id == user_id).first()
+    if not target_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="用户不存在",
+        )
+
+    # 等级信息
+    level_info = get_user_level_info(db, target_user.id)
+    db.commit()
+
+    # 粉丝数
+    follower_count = (
+        db.query(func.count(Follow.id))
+        .filter(Follow.following_id == user_id)
+        .scalar()
+    ) or 0
+
+    # 关注数
+    following_count = (
+        db.query(func.count(Follow.id))
+        .filter(Follow.follower_id == user_id)
+        .scalar()
+    ) or 0
+
+    # 当前用户是否关注了目标用户
+    is_following = (
+        db.query(Follow)
+        .filter(
+            Follow.follower_id == current_user.id,
+            Follow.following_id == user_id,
+        )
+        .first()
+        is not None
+    )
+
+    return UserProfileResponse(
+        id=target_user.id,
+        username=target_user.username,
+        nickname=target_user.nickname,
+        avatar=target_user.avatar,
+        persona=target_user.persona,
+        level=level_info["level"],
+        exp=level_info["exp"],
+        created_at=target_user.created_at,
+        follower_count=follower_count,
+        following_count=following_count,
+        is_following=is_following,
+    )
 
 
 async def invalidate_profile_stats_cache(user_id: int):

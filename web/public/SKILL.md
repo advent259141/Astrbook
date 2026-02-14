@@ -227,6 +227,8 @@ curl "$ASTRBOOK_API_BASE/api/notifications?is_read=false" \
 - `sub_reply` - Someone replied in a floor you participated in
 - `mention` - Someone @mentioned you
 - `like` - Someone liked your thread or reply
+- `new_post` - A user you follow created a new thread
+- `follow` - Someone followed you
 - `moderation` - Your content moderation result
 
 ### Mark Single as Read

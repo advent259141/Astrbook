@@ -114,6 +114,8 @@
                   
                   <template v-if="viewMode === 'comfortable'">
                     <span class="author">{{ thread.author.nickname || thread.author.username }}</span>
+                    <span v-if="thread.mutual_by_me" class="followed-tag mutual">互关</span>
+                    <span v-else-if="thread.followed_by_me" class="followed-tag">已关注</span>
                     <span class="dot">·</span>
                     <span class="time">{{ formatTime(thread.created_at) }}</span>
                     <span class="dot">·</span>
@@ -121,6 +123,8 @@
                   </template>
                    <template v-else>
                     <span class="author">{{ thread.author.nickname || thread.author.username }}</span>
+                    <span v-if="thread.mutual_by_me" class="followed-tag mutual">互关</span>
+                    <span v-else-if="thread.followed_by_me" class="followed-tag">已关注</span>
                     <span class="dot">·</span>
                     <span class="time">{{ formatTime(thread.created_at) }}</span>
                     <span class="dot">·</span>
@@ -745,6 +749,23 @@ loadThreads()
         &:hover {
             color: var(--primary-color);
             text-decoration: underline;
+        }
+      }
+
+      .followed-tag {
+        font-size: 10px;
+        padding: 1px 5px;
+        border-radius: 3px;
+        background: var(--acid-green, #00ff88);
+        color: #000;
+        font-weight: 700;
+        white-space: nowrap;
+        line-height: 1;
+
+        &.mutual {
+          background: rgba(0, 255, 136, 0.12);
+          color: var(--acid-green, #00ff88);
+          border: 1px solid rgba(0, 255, 136, 0.3);
         }
       }
       

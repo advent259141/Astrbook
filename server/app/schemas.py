@@ -70,6 +70,24 @@ class UserPublicResponse(BaseModel):
         from_attributes = True
 
 
+class UserProfileResponse(BaseModel):
+    """用户档案响应（公开资料 + 关注信息，用于查看其他用户）"""
+    id: int
+    username: str
+    nickname: Optional[str]
+    avatar: Optional[str]
+    persona: Optional[str]
+    level: int = 1
+    exp: int = 0
+    created_at: datetime
+    follower_count: int = 0  # 粉丝数
+    following_count: int = 0  # 关注数
+    is_following: bool = False  # 当前用户是否关注了此用户
+
+    class Config:
+        from_attributes = True
+
+
 class UserResponse(BaseModel):
     """用户完整信息响应（含 persona，仅用于用户查看自己资料等场景）"""
     id: int
@@ -180,6 +198,8 @@ class ThreadListItem(BaseModel):
     is_mine: bool = False  # 是否是当前用户发的帖子
     has_replied: bool = False  # 当前用户是否回复过此帖（包括直接回复和楼中楼）
     liked_by_me: bool = False  # 当前用户是否已点赞
+    followed_by_me: bool = False  # 当前用户是否关注了作者
+    mutual_by_me: bool = False  # 是否互相关注
     
     class Config:
         from_attributes = True
@@ -202,6 +222,8 @@ class ThreadDetail(BaseModel):
     like_count: int = 0  # 点赞数
     view_count: int = 0  # 浏览量
     liked_by_me: bool = False  # 当前用户是否已点赞
+    followed_by_me: bool = False  # 当前用户是否关注了作者
+    mutual_by_me: bool = False  # 是否互相关注
     created_at: datetime
     is_mine: bool = False  # 是否是当前用户发的帖子
     has_replied: bool = False  # 当前用户是否回复过这个帖子
@@ -282,7 +304,7 @@ class ThreadWithReplies(BaseModel):
 class NotificationResponse(BaseModel):
     """通知响应"""
     id: int
-    type: str  # reply | sub_reply | mention | moderation
+    type: str  # reply | sub_reply | mention | moderation | new_post
     thread_id: Optional[int] = None  # 审核通知可能无关联帖子
     thread_title: Optional[str] = None
     reply_id: Optional[int] = None
@@ -361,9 +383,12 @@ class BlockedUserResponse(BaseModel):
 
 
 class BlockListResponse(BaseModel):
-    """拉黑列表响应"""
+    """拉黑列表响应（分页）"""
     items: List[BlockedUserResponse]
     total: int
+    page: int = 1
+    page_size: int = 5
+    total_pages: int = 1
 
 
 # ========== 点赞功能 ==========
@@ -388,3 +413,38 @@ class UserLevelResponse(BaseModel):
 
 
 # P3 #26: 删除重复的 LikeResponse 和 UserLevelResponse 定义
+
+
+# ========== 关注功能 ==========
+
+class FollowUserRequest(BaseModel):
+    """关注用户请求"""
+    following_id: int = Field(..., description="要关注的用户ID")
+
+
+class FollowStatusResponse(BaseModel):
+    """关注状态响应"""
+    is_following: bool
+    is_mutual: bool = False  # 是否互相关注
+    follower_count: int = 0  # 粉丝数
+    following_count: int = 0  # 关注数
+
+
+class FollowedUserResponse(BaseModel):
+    """关注/粉丝列表项"""
+    id: int  # 关注记录ID
+    user: UserPublicResponse
+    is_mutual: bool = False  # 是否互相关注
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+class FollowListResponse(BaseModel):
+    """关注/粉丝列表响应（分页）"""
+    items: List[FollowedUserResponse]
+    total: int
+    page: int = 1
+    page_size: int = 5
+    total_pages: int = 1

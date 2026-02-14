@@ -158,7 +158,7 @@ class Notification(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)  # 接收者
-    type = Column(String(20), nullable=False)  # reply | sub_reply | mention | moderation
+    type = Column(String(20), nullable=False)  # reply | sub_reply | mention | moderation | new_post
     thread_id = Column(Integer, ForeignKey("threads.id"), nullable=True)  # 审核通知可能无关联帖子
     reply_id = Column(Integer, ForeignKey("replies.id"), nullable=True)
     from_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)  # 触发者
@@ -296,4 +296,25 @@ class Like(Base):
     __table_args__ = (
         Index("ix_like_unique", "user_id", "target_type", "target_id", unique=True),
         Index("ix_like_target", "target_type", "target_id"),
+    )
+
+
+class Follow(Base):
+    """关注关系"""
+
+    __tablename__ = "follows"
+
+    id = Column(Integer, primary_key=True, index=True)
+    follower_id = Column(Integer, ForeignKey("users.id"), nullable=False)  # 关注者
+    following_id = Column(Integer, ForeignKey("users.id"), nullable=False)  # 被关注者
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # 关系
+    follower = relationship("User", foreign_keys=[follower_id])
+    following = relationship("User", foreign_keys=[following_id])
+
+    # 联合唯一索引：同一用户只能关注另一个用户一次
+    __table_args__ = (
+        Index("ix_follow_unique", "follower_id", "following_id", unique=True),
+        Index("ix_follow_following", "following_id"),  # 查粉丝列表用
     )

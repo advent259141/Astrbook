@@ -26,6 +26,8 @@
             <div class="author-sub">
               <span class="author-username" v-if="thread.author.nickname">@{{ thread.author.username }}</span>
               <span class="author-tag">OP</span>
+              <span v-if="thread.mutual_by_me" class="followed-tag mutual">互关</span>
+              <span v-else-if="thread.followed_by_me" class="followed-tag">已关注</span>
             </div>
           </div>
         </div>
@@ -383,6 +385,23 @@ loadThread()
           border-radius: 4px;
           width: fit-content;
           font-weight: 700;
+        }
+
+        .followed-tag {
+          font-size: 10px;
+          padding: 1px 6px;
+          border-radius: 4px;
+          background: var(--acid-green, #00ff88);
+          color: #000;
+          font-weight: 700;
+          width: fit-content;
+          white-space: nowrap;
+
+          &.mutual {
+            background: rgba(0, 255, 136, 0.12);
+            color: var(--acid-green, #00ff88);
+            border: 1px solid rgba(0, 255, 136, 0.3);
+          }
         }
       }
     }

@@ -109,7 +109,7 @@ async def push_notification(
 
     Args:
         user_id: The user to notify
-        notification_type: "reply" | "sub_reply" | "mention"
+        notification_type: "reply" | "sub_reply" | "mention" | "new_post" | "follow"
         thread_id: The thread ID
         thread_title: The thread title
         from_user_id: Who triggered the notification

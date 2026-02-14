@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request, BackgroundTasks
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session, joinedload, defer
 from sqlalchemy import func, and_, or_, literal_column, literal, case, union_all, extract, text
@@ -18,6 +18,7 @@ from ..moderation import get_moderator
 from .blocks import get_blocked_user_ids, get_blocked_user_ids_async
 from ..level_service import add_exp_for_post, get_user_level_info, batch_get_user_levels
 from .likes import get_user_liked_thread_ids, get_user_liked_reply_ids, is_thread_liked_by_user
+from .follows import get_follower_ids, get_following_ids_cached, get_follower_ids_cached
 from ..rate_limit import limiter
 from ..redis_client import get_redis
 
@@ -399,11 +400,17 @@ async def list_threads(
     else:
         threads = []
     
-    # 获取当前用户在这些帖子中的辅助状态（合并为1次 UNION ALL 查询）
+    # 获取当前用户在这些帖子中的辅助状态
     thread_ids = [t.id for t in threads]
     replied_thread_ids = set()
     liked_thread_ids = set()
+    followed_author_ids = set()
+    follower_of_me_ids = set()
     if current_user and thread_ids:
+        # 关注状态：从 Redis 缓存获取（~0.1ms），不再走 DB
+        followed_author_ids = await get_following_ids_cached(db, current_user.id)
+        # 粉丝集合：用于互关判断
+        follower_of_me_ids = await get_follower_ids_cached(db, current_user.id)
         # 合并"回复过" + "点赞过" 为一次查询
         parts = [
             db.query(
@@ -439,6 +446,8 @@ async def list_threads(
         item.is_mine = current_user is not None and t.author_id == current_user.id
         item.has_replied = t.id in replied_thread_ids
         item.liked_by_me = t.id in liked_thread_ids
+        item.followed_by_me = t.author_id in followed_author_ids
+        item.mutual_by_me = t.author_id in followed_author_ids and t.author_id in follower_of_me_ids
         item.like_count = t.like_count or 0
         # 设置作者等级信息
         level_info = user_levels.get(t.author_id, {"level": 1, "exp": 0})
@@ -479,6 +488,7 @@ async def list_threads(
 def create_thread(
     request: Request,
     data: ThreadCreate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -505,14 +515,65 @@ def create_thread(
     # 发帖获得经验
     exp_gained, level_up = add_exp_for_post(db, current_user.id)
     
+    # 获取粉丝列表（在 commit 前查询，复用同一 session）
+    follower_ids = get_follower_ids(db, current_user.id)
+    
     db.commit()
     db.refresh(thread)
+    
+    # 后台任务：通知所有粉丝有新帖子
+    if follower_ids:
+        background_tasks.add_task(
+            _notify_followers_new_thread,
+            follower_ids=follower_ids,
+            thread_id=thread.id,
+            thread_title=thread.title,
+            content_preview=thread.content[:100] if thread.content else "",
+            from_user_id=current_user.id,
+            from_username=current_user.nickname or current_user.username
+        )
     
     result = ThreadDetail.model_validate(thread)
     result.is_mine = True  # 自己发的帖子
     result.like_count = 0
     result.liked_by_me = False
     return result
+
+
+def _notify_followers_new_thread(
+    follower_ids: list[int],
+    thread_id: int,
+    thread_title: str,
+    content_preview: str,
+    from_user_id: int,
+    from_username: str
+):
+    """后台任务：为所有粉丝创建「关注的人发帖」通知"""
+    from ..database import SessionLocal
+    from .notifications import create_notification
+    
+    db = SessionLocal()
+    try:
+        for follower_id in follower_ids:
+            try:
+                create_notification(
+                    db=db,
+                    user_id=follower_id,
+                    from_user_id=from_user_id,
+                    type="new_post",
+                    thread_id=thread_id,
+                    content_preview=content_preview,
+                    thread_title=thread_title,
+                    from_username=from_username
+                )
+            except Exception as e:
+                logger.warning(f"Failed to notify follower {follower_id}: {e}")
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.warning(f"Failed to notify followers: {e}")
+    finally:
+        db.close()
 
 
 @router.get("/{thread_id}")
@@ -640,6 +701,14 @@ async def get_thread(
     liked_reply_ids = set()
     thread_liked = False
     has_replied = False
+    # 关注状态：从 Redis 缓存获取（~0.1ms），不走 DB
+    following_ids_cached = set()
+    follower_ids_cached = set()
+    if current_user_id:
+        following_ids_cached = await get_following_ids_cached(db, current_user_id)
+        follower_ids_cached = await get_follower_ids_cached(db, current_user_id)
+    author_followed = thread.author_id in following_ids_cached
+    author_mutual = author_followed and thread.author_id in follower_ids_cached
     
     if current_user_id:
         # 子查询1: 用户点赞的回复IDs
@@ -720,6 +789,8 @@ async def get_thread(
     thread_detail.has_replied = has_replied
     thread_detail.like_count = thread.like_count or 0
     thread_detail.liked_by_me = thread_liked
+    thread_detail.followed_by_me = author_followed
+    thread_detail.mutual_by_me = author_mutual
     # 设置作者等级信息
     author_level = user_levels.get(thread.author_id, {"level": 1, "exp": 0})
     thread_detail.author.level = author_level["level"]

@@ -1,7 +1,8 @@
 """拉黑功能路由"""
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import or_
+from sqlalchemy import or_, func
+import math
 from ..database import get_db
 from ..models import User, BlockList
 from ..schemas import (
@@ -85,19 +86,29 @@ async def invalidate_block_cache(user_id: int, target_id: int):
 
 @router.get("", response_model=BlockListResponse)
 def get_block_list(
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(5, ge=1, le=20, description="每页数量"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
-    获取当前用户的拉黑列表
+    获取当前用户的拉黑列表（分页）
     
     Bot 和用户都可以调用此接口查看自己的拉黑列表
     """
+    # 总数
+    total = db.query(func.count(BlockList.id)).filter(
+        BlockList.user_id == current_user.id
+    ).scalar() or 0
+    total_pages = max(1, math.ceil(total / page_size))
+
     blocks = (
         db.query(BlockList)
         .options(joinedload(BlockList.blocked_user))
         .filter(BlockList.user_id == current_user.id)
         .order_by(BlockList.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
         .all()
     )
     
@@ -110,7 +121,10 @@ def get_block_list(
         for block in blocks
     ]
     
-    return BlockListResponse(items=items, total=len(items))
+    return BlockListResponse(
+        items=items, total=total,
+        page=page, page_size=page_size, total_pages=total_pages
+    )
 
 
 @router.post("", response_model=BlockedUserResponse)

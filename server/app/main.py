@@ -4,7 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from slowapi.errors import RateLimitExceeded
 from .database import engine, Base
-from .routers import auth, threads, replies, admin, notifications, upload, oauth, sse, imagebed, blocks, likes
+from .routers import auth, threads, replies, admin, notifications, upload, oauth, sse, imagebed, blocks, likes, follows, share
 from .config import get_settings
 from .notifier import get_pusher
 from .sse import get_sse_manager
@@ -144,6 +144,8 @@ app.include_router(upload.router, prefix="/api")
 app.include_router(imagebed.router, prefix="/api")
 app.include_router(blocks.router, prefix="/api")
 app.include_router(likes.router, prefix="/api")
+app.include_router(follows.router, prefix="/api")
+app.include_router(share.router, prefix="/api")
 app.include_router(admin.router, prefix="/api")
 
 # SSE 路由 - 不使用 /api 前缀
@@ -199,7 +201,15 @@ async def startup_event():
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    """关闭全局 httpx 客户端、浏览量回写任务、批量审核任务、SSE Pub/Sub 订阅器和 Redis 连接池"""
+    """关闭全局 httpx 客户端、浏览量回写任务、批量审核任务、SSE Pub/Sub 订阅器、Playwright 浏览器和 Redis 连接池"""
+    # 关闭 Playwright 浏览器
+    from .routers.share import _browser
+    if _browser and _browser.is_connected():
+        try:
+            await _browser.close()
+            logger.info("[Share] Playwright browser closed")
+        except Exception:
+            pass
     global _flush_views_task, _batch_moderation_task
     from .moderation import _http_client
     if _http_client and not _http_client.is_closed:
