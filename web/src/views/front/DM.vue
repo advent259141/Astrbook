@@ -136,7 +136,7 @@
 <script setup>
 defineOptions({ name: 'FrontDM' })
 
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, Refresh, Search } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
@@ -150,6 +150,7 @@ const router = useRouter()
 const route = useRoute()
 
 const keyword = ref('')
+const debouncedKeyword = ref('')
 const listLoading = ref(false)
 const messageLoading = ref(false)
 const loadingMore = ref(false)
@@ -168,9 +169,11 @@ const pageSize = 40
 const fallbackIntervalMs = 15000
 let dmEventSource = null
 let fallbackTimer = null
+let searchDebounceTimer = null
+let resizeThrottleTimer = null
 
 const filteredConversations = computed(() => {
-  const kw = keyword.value.toLowerCase()
+  const kw = debouncedKeyword.value.toLowerCase()
   if (!kw) return conversations.value
   return conversations.value.filter((c) => {
     const nickname = (c.peer.nickname || '').toLowerCase()
@@ -184,12 +187,16 @@ const activeConversation = computed(() => {
 })
 
 const handleResize = () => {
-  isMobile.value = window.innerWidth <= 900
-  if (!isMobile.value) {
-    mobileShowChat.value = true
-  } else if (!activeConversationId.value) {
-    mobileShowChat.value = false
-  }
+  if (resizeThrottleTimer) return
+  resizeThrottleTimer = setTimeout(() => {
+    resizeThrottleTimer = null
+    isMobile.value = window.innerWidth <= 900
+    if (!isMobile.value) {
+      mobileShowChat.value = true
+    } else if (!activeConversationId.value) {
+      mobileShowChat.value = false
+    }
+  }, 200)
 }
 
 const formatListTime = (value) => {
@@ -446,7 +453,12 @@ const openConversation = async (conv) => {
   messageLoading.value = true
   try {
     const list = await loadMessages(conv.peer?.id)
-    messages.value = Array.isArray(list) ? list : []
+    // 冻结消息数据减少响应式开销
+    const frozenList = Array.isArray(list) ? list.map(msg => Object.freeze({
+      ...msg,
+      sender: Object.freeze(msg.sender)
+    })) : []
+    messages.value = frozenList
     hasMore.value = messages.value.length === pageSize
     scrollToBottom()
   } catch (error) {
@@ -469,7 +481,12 @@ const loadMore = async () => {
     const list = Array.isArray(older) ? older : []
     hasMore.value = list.length === pageSize
     if (list.length > 0) {
-      messages.value = [...list, ...messages.value]
+      // 冻结新加载的消息
+      const frozenOlder = list.map(msg => Object.freeze({
+        ...msg,
+        sender: Object.freeze(msg.sender)
+      }))
+      messages.value = [...frozenOlder, ...messages.value]
       await nextTick()
       if (viewport) {
         viewport.scrollTop = viewport.scrollHeight - oldHeight
@@ -519,6 +536,17 @@ const loadConversations = async () => {
   }
 }
 
+// 搜索防抖
+const handleSearchInput = () => {
+  if (searchDebounceTimer) clearTimeout(searchDebounceTimer)
+  searchDebounceTimer = setTimeout(() => {
+    debouncedKeyword.value = keyword.value
+  }, 300)
+}
+
+// 监听keyword变化触发防抖
+watch(keyword, handleSearchInput)
+
 onMounted(() => {
   handleResize()
   window.addEventListener('resize', handleResize, { passive: true })
@@ -528,6 +556,8 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', handleResize)
+  if (searchDebounceTimer) clearTimeout(searchDebounceTimer)
+  if (resizeThrottleTimer) clearTimeout(resizeThrottleTimer)
   closeSse()
   stopFallbackSync()
 })

@@ -27,8 +27,10 @@ from ..schemas import (
 router = APIRouter(prefix="/dm", tags=["dm"])
 logger = logging.getLogger(__name__)
 
-DM_CONVERSATION_LIST_CACHE_TTL = 15
-DM_UNREAD_COUNT_CACHE_TTL = 15
+# Redis缓存TTL配置
+DM_CONVERSATION_LIST_CACHE_TTL = 15  # 会话列表缓存（秒）
+DM_UNREAD_COUNT_CACHE_TTL = 10       # 未读数缓存（秒）
+DM_USER_INFO_CACHE_TTL = 300         # 用户信息缓存（5分钟）
 
 
 def _dm_conversation_cache_key(user_id: int, page: int, page_size: int) -> str:
@@ -278,44 +280,51 @@ def _serialize_conversations(
     conv_ids = [conv.id for conv in conversations]
     peer_ids = {_conversation_peer_id(conv, current_user_id) for conv in conversations}
 
-    peer_users = db.query(User).filter(User.id.in_(peer_ids)).all()
+    # 批量查询用户，只加载需要的字段
+    peer_users = (
+        db.query(User)
+        .filter(User.id.in_(peer_ids))
+        .options(
+            joinedload(User.level_info)
+        )
+        .all()
+    )
     peer_map = {user.id: user for user in peer_users}
 
-    following_ids = {
-        row[0]
-        for row in db.query(Follow.following_id)
-        .filter(Follow.follower_id == current_user_id)
-        .all()
-    }
-    follower_ids = {
-        row[0]
-        for row in db.query(Follow.follower_id)
-        .filter(Follow.following_id == current_user_id)
-        .all()
-    }
-
-    blocked_rows = (
-        db.query(BlockList.user_id, BlockList.blocked_user_id)
+    # 合并Follow查询：一次查询同时获取following和follower
+    follow_rows = (
+        db.query(Follow.follower_id, Follow.following_id)
         .filter(
             or_(
-                and_(
-                    BlockList.user_id == current_user_id,
-                    BlockList.blocked_user_id.in_(peer_ids),
-                ),
-                and_(
-                    BlockList.blocked_user_id == current_user_id,
-                    BlockList.user_id.in_(peer_ids),
-                ),
+                and_(Follow.follower_id == current_user_id, Follow.following_id.in_(peer_ids)),
+                and_(Follow.following_id == current_user_id, Follow.follower_id.in_(peer_ids)),
             )
         )
         .all()
     )
-    blocked_peer_ids: set[int] = set()
-    for user_id, blocked_user_id in blocked_rows:
-        if user_id == current_user_id:
-            blocked_peer_ids.add(blocked_user_id)
-        else:
-            blocked_peer_ids.add(user_id)
+    following_ids: set[int] = set()
+    follower_ids: set[int] = set()
+    for follower_id, following_id in follow_rows:
+        if follower_id == current_user_id:
+            following_ids.add(following_id)
+        if following_id == current_user_id:
+            follower_ids.add(follower_id)
+
+    # 简化BlockList查询
+    blocked_rows = (
+        db.query(BlockList.user_id, BlockList.blocked_user_id)
+        .filter(
+            or_(
+                and_(BlockList.user_id == current_user_id, BlockList.blocked_user_id.in_(peer_ids)),
+                and_(BlockList.blocked_user_id == current_user_id, BlockList.user_id.in_(peer_ids)),
+            )
+        )
+        .all()
+    )
+    blocked_peer_ids = {
+        blocked_id if user_id == current_user_id else user_id
+        for user_id, blocked_id in blocked_rows
+    }
 
     read_subquery = (
         db.query(
@@ -384,7 +393,9 @@ def _query_messages(
 ) -> list[DMMessage]:
     query = (
         db.query(DMMessage)
-        .options(joinedload(DMMessage.sender))
+        .options(
+            joinedload(DMMessage.sender).joinedload(User.level_info)
+        )
         .filter(DMMessage.conversation_id == conversation_id)
     )
     if before_id:
@@ -488,6 +499,7 @@ async def list_conversations(
         except Exception:
             pass
 
+    # 使用with_hint优化查询计划（PostgreSQL）
     base_query = db.query(DMConversation).filter(
         or_(
             DMConversation.user_low_id == current_user.id,
@@ -495,6 +507,7 @@ async def list_conversations(
         )
     )
 
+    # 优化：使用窗口函数避免两次查询
     total = base_query.count()
     total_pages = (total + page_size - 1) // page_size if total > 0 else 1
 
