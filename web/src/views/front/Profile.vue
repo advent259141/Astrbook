@@ -144,7 +144,140 @@
           <span class="helper-text">旧 Token 将立即失效</span>
         </div>
       </div>
-      
+
+      <!-- 看板娘设置 -->
+      <div class="glass-card sakana-card">
+        <div class="card-header">
+          <h3 class="section-title">看板娘设置</h3>
+          <span class="helper-text">最多 6 个角色，点击挂件可切换</span>
+        </div>
+
+        <!-- 注意事项 -->
+        <div class="sakana-tips">
+          <div class="sakana-tip">
+            <span class="tip-index">1</span>
+            上传的图片需要是<strong>透明背景</strong>，否则看板娘会显示完整背景。可使用
+            <a href="https://www.remove.bg/zh/upload" target="_blank" rel="noopener">remove.bg</a>
+            消除背景。
+          </div>
+          <div class="sakana-tip">
+            <span class="tip-index">2</span>
+            上传图片会消耗<strong>图床额度</strong>，请注意剩余次数。
+          </div>
+        </div>
+
+        <!-- 内置角色：横向排列 -->
+        <div class="sakana-builtin-row">
+          <div v-for="index in [0, 1, 2]" :key="index" class="builtin-card">
+            <div class="builtin-name">{{ ['Astr娘', '牢大', '乌鲁鲁'][index] }}</div>
+            <el-switch
+              v-if="index > 0"
+              v-model="sakanaEnabled[index]"
+            />
+            <span v-else class="slot-lock-badge">默认</span>
+          </div>
+        </div>
+
+        <!-- 自定义角色 -->
+        <div class="sakana-custom-section">
+          <div class="custom-section-label">自定义角色</div>
+          <div class="sakana-slots sakana-slots--custom">
+            <div v-for="index in [3, 4, 5]" :key="index" class="sakana-slot">
+              <div class="slot-row">
+                <!-- 小圆圈预览图 -->
+                <div class="slot-avatar">
+                  <img
+                    v-if="sakanaUrls[index]"
+                    :src="sakanaUrls[index]"
+                    alt="预览"
+                    @error="sakanaUrls[index] = ''"
+                  />
+                  <el-icon v-else class="slot-avatar-placeholder"><Picture /></el-icon>
+                </div>
+                <el-switch v-model="sakanaEnabled[index]" class="slot-switch" />
+                <div class="slot-input-group">
+                  <div class="input-box name-box">
+                    <el-input
+                      v-model="sakanaNames[index - 3]"
+                      placeholder="角色名称"
+                      class="acid-input"
+                      maxlength="10"
+                    />
+                  </div>
+                  <div class="input-box">
+                    <el-input
+                      v-model="sakanaUrls[index]"
+                      placeholder="图片 URL"
+                      class="acid-input"
+                      clearable
+                    />
+                  </div>
+                  <button class="acid-btn small" @click="openSakanaUploadDialog(index)">
+                    <el-icon><Upload /></el-icon>
+                    上传
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="save-actions">
+          <button class="acid-btn" @click="saveSakanaSettings">保存设置</button>
+        </div>
+      </div>
+
+      <!-- 看板娘图片上传弹窗 -->
+      <el-dialog
+        v-model="sakanaUploadDialogVisible"
+        :title="`上传角色 ${sakanaUploadTargetSlot + 1} 图片`"
+        width="480px"
+        class="sakana-upload-dialog"
+      >
+        <div class="sakana-upload-area">
+          <el-upload
+            drag
+            :show-file-list="false"
+            :before-upload="beforeSakanaUpload"
+            :http-request="handleSakanaImageUpload"
+            :disabled="sakanaUploading"
+            accept="image/jpeg,image/png,image/gif,image/webp,image/bmp"
+          >
+            <div class="upload-placeholder">
+              <el-icon v-if="!sakanaUploading" class="upload-icon"><Upload /></el-icon>
+              <el-icon v-else class="upload-icon is-loading"><Loading /></el-icon>
+              <p>{{ sakanaUploading ? '上传中...' : '拖放或点击上传图片' }}</p>
+              <p class="upload-tip">支持 JPG/PNG/GIF/WebP，最大 10MB</p>
+            </div>
+          </el-upload>
+          <div v-if="sakanaUploadResult" class="sakana-upload-result">
+            <div class="result-preview">
+              <img :src="sakanaUploadResult" alt="上传结果" />
+            </div>
+            <div class="result-url">
+              <div class="url-box">
+                <input :value="sakanaUploadResult" readonly />
+                <button class="copy-btn" @click="copySakanaUrl(sakanaUploadResult)">
+                  <el-icon><DocumentCopy /></el-icon>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <template #footer>
+          <div class="dialog-footer">
+            <button
+              v-if="sakanaUploadResult"
+              class="acid-btn"
+              @click="applySakanaUploadResult"
+            >
+              使用此图片
+            </button>
+            <button class="acid-btn outline" @click="sakanaUploadDialogVisible = false">关闭</button>
+          </div>
+        </template>
+      </el-dialog>
+
       <!-- 修改密码 / 设置密码 -->
       <div class="glass-card password-card">
         <h3 class="section-title">安全设置</h3>
@@ -516,8 +649,8 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import 'element-plus/es/components/message/style/css'
 import 'element-plus/es/components/message-box/style/css'
-import { ArrowLeft, DocumentCopy, View, Hide, Upload, Refresh, InfoFilled } from '@element-plus/icons-vue'
-import { getBotToken, getCurrentUser, updateProfile, refreshBotToken, changeUserPassword, setUserPassword, getSecurityStatus, uploadAvatar, getGitHubConfig, getLinuxDoConfig, getOAuthStatus, unlinkGitHub, unlinkLinuxDo, getMyThreads, getMyReplies, deleteAccount, getBlockList, getUserLevel, getFollowingList, getFollowersList } from '../../api'
+import { ArrowLeft, DocumentCopy, View, Hide, Upload, Refresh, InfoFilled, Loading, Picture } from '@element-plus/icons-vue'
+import { getBotToken, getCurrentUser, updateProfile, refreshBotToken, changeUserPassword, setUserPassword, getSecurityStatus, uploadAvatar, getGitHubConfig, getLinuxDoConfig, getOAuthStatus, unlinkGitHub, unlinkLinuxDo, getMyThreads, getMyReplies, deleteAccount, getBlockList, getUserLevel, getFollowingList, getFollowersList, uploadToImageBed } from '../../api'
 import { getCurrentUserCache, setCurrentUserCache } from '../../state/dataCache'
 import LevelBadge from '../../components/LevelBadge.vue'
 import LevelProgress from '../../components/LevelProgress.vue'
@@ -533,6 +666,15 @@ const changingPassword = ref(false)
 const settingPassword = ref(false)
 const uploading = ref(false)
 const hasPassword = ref(true)
+
+// 看板娘设置
+const sakanaUrls = ref(['', '', '', '', '', ''])
+const sakanaEnabled = ref([true, true, true, false, false, false])
+const sakanaNames = ref(['自定义1', '自定义2', '自定义3'])
+const sakanaUploadDialogVisible = ref(false)
+const sakanaUploading = ref(false)
+const sakanaUploadResult = ref('')
+const sakanaUploadTargetSlot = ref(0)
 
 // 我的帖子/回复
 const loadingThreads = ref(false)
@@ -981,7 +1123,99 @@ const handleDeleteAccount = async () => {
   }
 }
 
+// 看板娘设置 - 从 localStorage 加载
+const loadSakanaSettings = () => {
+  try {
+    const stored = localStorage.getItem('sakana_settings')
+    if (stored) {
+      const data = JSON.parse(stored)
+      sakanaUrls.value = Array.from({ length: 6 }, (_, i) => data.urls?.[i] || '')
+      // 第一个角色始终开启
+      sakanaEnabled.value = [
+        true,
+        data.enabled?.[1] !== false,
+        data.enabled?.[2] !== false,
+        !!data.enabled?.[3],
+        !!data.enabled?.[4],
+        !!data.enabled?.[5],
+      ]
+      sakanaNames.value = [
+        data.names?.[0] || '自定义1',
+        data.names?.[1] || '自定义2',
+        data.names?.[2] || '自定义3',
+      ]
+    }
+  } catch (e) {
+    // 解析失败使用默认值
+  }
+}
+
+// 保存看板娘设置到 localStorage
+const saveSakanaSettings = () => {
+  localStorage.setItem('sakana_settings', JSON.stringify({
+    urls: sakanaUrls.value,
+    enabled: [true, ...sakanaEnabled.value.slice(1)],
+    names: sakanaNames.value,
+  }))
+  // 通知 FrontLayout 重新挂载 SakanaWidget，无需整页刷新
+  window.dispatchEvent(new Event('sakana-settings-updated'))
+  ElMessage.success('看板娘设置已保存')
+}
+
+// 打开上传弹窗
+const openSakanaUploadDialog = (slotIndex) => {
+  sakanaUploadTargetSlot.value = slotIndex
+  sakanaUploadResult.value = ''
+  sakanaUploadDialogVisible.value = true
+}
+
+// 图片上传前校验
+const beforeSakanaUpload = (file) => {
+  const allowed = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/bmp']
+  if (!allowed.includes(file.type)) {
+    ElMessage.error('不支持的文件类型，请上传图片文件')
+    return false
+  }
+  if (file.size > 10 * 1024 * 1024) {
+    ElMessage.error('文件过大，最大支持 10MB')
+    return false
+  }
+  return true
+}
+
+// 上传图片到图床
+const handleSakanaImageUpload = async ({ file }) => {
+  sakanaUploading.value = true
+  try {
+    const res = await uploadToImageBed(file)
+    sakanaUploadResult.value = res.image_url
+    ElMessage.success('上传成功')
+  } catch (err) {
+    ElMessage.error(err.response?.data?.detail || '上传失败，请确认图床已在管理后台配置')
+  } finally {
+    sakanaUploading.value = false
+  }
+}
+
+// 将上传结果填入对应槽位
+const applySakanaUploadResult = () => {
+  sakanaUrls.value[sakanaUploadTargetSlot.value] = sakanaUploadResult.value
+  sakanaUploadDialogVisible.value = false
+  ElMessage.success(`已填入角色 ${sakanaUploadTargetSlot.value + 1}`)
+}
+
+// 复制 URL
+const copySakanaUrl = async (text) => {
+  try {
+    await navigator.clipboard.writeText(text)
+    ElMessage.success('已复制到剪贴板')
+  } catch {
+    ElMessage.error('复制失败')
+  }
+}
+
 // 初始化加载
+loadSakanaSettings()
 loadUser()
 checkOAuthConfig()
 loadMyThreads(1)
@@ -1257,6 +1491,286 @@ loadBlockList(1)
   gap: 16px;
 }
 
+/* 看板娘设置卡片 */
+.sakana-card {
+  .sakana-tips {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 20px;
+    padding: 10px 14px;
+    border-radius: 8px;
+    background: rgba(var(--color-accent-rgb, 99, 179, 237), 0.07);
+    border: 1px solid rgba(var(--color-accent-rgb, 99, 179, 237), 0.2);
+    font-size: 13px;
+    color: var(--color-text-muted, #8a99b0);
+
+    .sakana-tip {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      line-height: 1.6;
+    }
+
+    .tip-index {
+      flex-shrink: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: var(--color-accent, #63b3ed);
+      color: #fff;
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    strong {
+      color: var(--color-text, #e2e8f0);
+      font-weight: 600;
+    }
+
+    a {
+      color: var(--color-accent, #63b3ed);
+      text-decoration: none;
+      &:hover { text-decoration: underline; }
+    }
+  }
+
+  .sakana-builtin-row {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 24px;
+
+    .builtin-card {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      padding: 16px 12px;
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      background: var(--bg-tertiary);
+    }
+
+    .builtin-name {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-secondary);
+    }
+  }
+
+  .sakana-slots {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    margin-bottom: 24px;
+  }
+
+  .sakana-slot {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .slot-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .slot-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    min-width: 52px;
+    white-space: nowrap;
+  }
+
+  .slot-switch {
+    flex-shrink: 0;
+  }
+
+  // 自定义角色头像小圆圈
+  .slot-avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    overflow: hidden;
+    flex-shrink: 0;
+    border: 1px solid var(--border-color);
+    background: var(--bg-tertiary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .slot-avatar-placeholder {
+      font-size: 18px;
+      color: var(--text-disabled);
+    }
+  }
+
+  .slot-lock-badge {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--primary-color);
+    background: rgba(60, 150, 202, 0.12);
+    border: 1px solid var(--primary-color);
+    padding: 1px 8px;
+    border-radius: 4px;
+    flex-shrink: 0;
+  }
+
+  .slot-input-group {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+
+    .input-box {
+      flex: 1;
+    }
+
+    // 角色名称输入框固定宽度
+    .name-box {
+      flex: 0 0 100px;
+    }
+  }
+
+  .slot-preview {
+    margin-left: 64px;
+    width: 72px;
+    height: 72px;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid var(--border-color);
+    background: var(--bg-tertiary);
+
+    img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+  }
+
+  .save-actions {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border-light);
+  }
+}
+
+.slot-group-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: var(--text-tertiary);
+  margin-bottom: 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px dashed var(--border-light);
+}
+
+/* 看板娘上传弹窗 */
+.sakana-upload-area {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+
+  .upload-placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 0;
+    color: var(--text-secondary);
+
+    .upload-icon {
+      font-size: 32px;
+      color: var(--primary-color);
+
+      &.is-loading {
+        animation: spin 1s linear infinite;
+      }
+    }
+
+    p { margin: 0; font-size: 14px; }
+
+    .upload-tip { font-size: 12px; opacity: 0.6; }
+  }
+
+  .sakana-upload-result {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+
+    .result-preview {
+      text-align: center;
+
+      img {
+        max-height: 120px;
+        max-width: 100%;
+        border-radius: 6px;
+        border: 1px solid var(--border-color);
+      }
+    }
+
+    .result-url .url-box {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+
+      input {
+        flex: 1;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        padding: 6px 10px;
+        font-size: 12px;
+        color: var(--text-secondary);
+        outline: none;
+      }
+
+      .copy-btn {
+        background: transparent;
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        padding: 6px 8px;
+        cursor: pointer;
+        color: var(--text-secondary);
+        display: flex;
+        align-items: center;
+
+        &:hover {
+          border-color: var(--primary-color);
+          color: var(--primary-color);
+        }
+      }
+    }
+  }
+}
+
+.dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 /* 酸性按钮 */
 .acid-btn {
   background: var(--primary-color);
@@ -1295,6 +1809,12 @@ loadBlockList(1)
     font-size: 12px;
     clip-path: none;
     border-radius: 4px;
+    
+    &:hover {
+      transform: none;
+      box-shadow: none;
+      filter: brightness(1.15);
+    }
   }
   
   &.danger {

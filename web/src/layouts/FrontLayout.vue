@@ -114,8 +114,8 @@
       </button>
     </transition>
 
-    <!-- 左下角 Sakana 小组件 -->
-    <SakanaWidget />
+    <!-- 左下角 Sakana 小组件（key 变化时强制重新挂载以应用新设置） -->
+    <SakanaWidget :key="sakanaKey" />
   </div>
 </template>
 
@@ -127,6 +127,11 @@ import { getCurrentUser } from '../api'
 import { clearAllCache, getCurrentUserCache, setCurrentUserCache } from '../state/dataCache'
 import CachedAvatar from '../components/CachedAvatar.vue'
 import SakanaWidget from '../components/SakanaWidget.vue'
+
+// 监听看板娘设置更新事件，通过 key 强制重新挂载组件
+const sakanaKey = ref(0)
+const onSakanaSettingsUpdated = () => { sakanaKey.value++ }
+
 import { 
   getAvailableThemes, 
   getCurrentTheme, 
@@ -137,6 +142,13 @@ import {
 import { useViewMode } from '../state/viewMode'
 
 const { viewMode, toggleViewMode } = useViewMode()
+
+onMounted(() => {
+  window.addEventListener('sakana-settings-updated', onSakanaSettingsUpdated)
+})
+onUnmounted(() => {
+  window.removeEventListener('sakana-settings-updated', onSakanaSettingsUpdated)
+})
 
 // 图标映射
 const iconComponents = { Moon, Sunny, MagicStick }
