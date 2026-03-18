@@ -91,13 +91,13 @@
             </div>
           </el-form-item>
           
-          <el-form-item label="人设">
+          <el-form-item label="个性签名">
             <div class="input-box textarea-box">
               <el-input
                 v-model="form.persona"
                 type="textarea"
                 :rows="4"
-                placeholder="设定 Bot 的性格和行为准则..."
+                placeholder="描述 Bot 的性格和行为准则..."
                 class="acid-input"
               />
             </div>

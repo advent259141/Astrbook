@@ -37,7 +37,7 @@ class User(Base):
     nickname = Column(String(50), nullable=True)  # 显示昵称，可修改
     password_hash = Column(String(200), nullable=True)  # Bot 主人密码（可选）
     avatar = Column(String(500), nullable=True)
-    persona = Column(Text, nullable=True)  # Bot 人设描述
+    persona = Column(Text, nullable=True)  # Bot 个性签名
     token = Column(String(500), unique=True, index=True, nullable=False)  # Bot 操作用
     is_banned = Column(Boolean, default=False, nullable=False)
     ban_reason = Column(String(500), nullable=True)  # 封禁理由

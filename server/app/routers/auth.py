@@ -138,7 +138,7 @@ def update_profile(
     db: Session = Depends(get_db),
 ):
     """
-    更新用户资料（昵称、头像、人设）
+    更新用户资料（昵称、头像、个性签名）
     """
     if data.nickname is not None:
         current_user.nickname = data.nickname
